@@ -48,22 +48,32 @@ contract version (`cdt-kicad-contract-v1` → next).
 - `timeout`: bounded autoroute/export budgets; a timeout is NOT proof of
   cancellation — the gateway should re-query state before retrying.
 
-## Docker
+## Windows-native deployment (no Docker)
 
-```bash
-docker build -t cdt-kicad:2.7.0-cdt.1 .
-docker run -d --name cdt-kicad -p 3100:3100 \
-  -e KICAD_MCP_TOKEN="$KICAD_MCP_TOKEN" \
-  -e KICAD_PYTHON=/usr/bin/python3 \
-  -v kicad-projects:/work:rw \
-  -v ./docs/TOOL_GUIDE.md:/app/docs/TOOL_GUIDE.md:ro \
-  cdt-kicad:2.7.0-cdt.1
-curl -sf http://127.0.0.1:3100/healthz
+KiCAD (`pcbnew`, IPC UI sync) is Windows-bound, so this provider deploys as
+a native Windows process — no container image is shipped. Standard §13
+Docker expectations do not apply; the equivalent controls below do.
+
+```powershell
+npm run build
+$env:KICAD_MCP_TOKEN = (Get-Secret kicad_mcp_token)  # secret manager, never a file
+$env:MCP_TRANSPORT = "both"; $env:MCP_PORT = "3100"
+node dist/index.js
+.\scripts\check-health.ps1 -Port 3100
 ```
 
-Full ECAD execution needs KiCAD's `pcbnew` (see `Dockerfile` note). Behind a
-reverse proxy/tunnel, terminate TLS at the edge and keep the provider bound
-to loopback or the container network.
+- Persistence: register as a Windows service (NSSM) or a Task Scheduler
+  "at startup" task running the commands above; restart on failure.
+- Liveness: poll `scripts\check-health.ps1` (wraps `GET /healthz`) from the
+  scheduler or monitor; no credentials, no side effects.
+- Updates without rebuild: `docs\TOOL_GUIDE.md` is read at runtime — it can
+  be replaced on disk (read-only ACL recommended); `contract_hash` changes
+  accordingly and clients re-fetch `help`.
+- Remote access: keep the provider bound to `127.0.0.1` and terminate
+  TLS/exposure at the edge (reverse proxy / Cloudflare Tunnel); never bind
+  `0.0.0.0` without `KICAD_MCP_TOKEN` set.
+- Projects live on host paths (`KICAD_PYTHON` auto-detects the KiCAD 10
+  bundled interpreter); back up project dirs like any working data.
 
 ## Standard §16 checklist status
 
