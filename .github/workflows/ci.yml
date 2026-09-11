@@ -1,0 +1,38 @@
+# CDT-KiCAD CI
+#
+# Fast honest lanes: TypeScript build, lint, unit/contract tests and the
+# generated tool-inventory check. The full Python bridge suite needs a real
+# KiCAD (pcbnew) install, so CI only byte-compiles the bridge and leaves the
+# 1500+ behavioral tests to the KiCAD-bearing local lane
+# (pytest tests/ -v with KiCAD 9/10 on PATH).
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint:ts
+      - run: npm run test:ts
+      - run: npm run docs:tools:check
+
+  python-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m compileall -q python scripts/download_jlcpcb.py

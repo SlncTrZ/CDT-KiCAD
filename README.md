@@ -804,6 +804,24 @@ Look for a ready-made part before generating a custom one.
 - `import_eagle_project` - Convert an Eagle project
 - `import_pcb` - Load an existing `.kicad_pcb` into the session
 
+## CDT-KiCAD network mode (SlncTrZ)
+
+STDIO stays the default for local/desktop clients. For network use:
+
+```bash
+npm run build
+# fail-closed: refuses to listen without KICAD_MCP_TOKEN
+KICAD_MCP_TOKEN="<deployment-secret>" MCP_TRANSPORT=http MCP_PORT=3100 node dist/index.js
+# or both transports at once:
+MCP_TRANSPORT=both node dist/index.js --port 3100 --host 127.0.0.1
+```
+
+- `POST /mcp` — Streamable HTTP endpoint (`Authorization: Bearer` or `X-API-Key`).
+- `GET /healthz` — unauthenticated liveness for Docker/orchestrators.
+- Call `help` first: versions, `contract_hash`, capabilities, full usage guide.
+- Docker: see [`Dockerfile`](Dockerfile); gateway wiring: see
+  [`docs/SLNCTRZ_INTEGRATION.md`](docs/SLNCTRZ_INTEGRATION.md).
+
 ## Prerequisites
 
 ### Required Software
