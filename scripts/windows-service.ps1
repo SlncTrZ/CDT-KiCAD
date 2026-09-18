@@ -126,7 +126,11 @@ function Install-ProviderTask {
   $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File $escapedScript -Port $Port -HostName $HostName -SecretName $SecretName"
   $taskAction = New-ScheduledTaskAction -Execute $powerShellExe -Argument $arguments -WorkingDirectory $repoRoot
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-  $userId = if ($env:USERDOMAIN) { "$($env:USERDOMAIN)\$($env:USERNAME)" } else { $env:USERNAME }
+  $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  if ($null -eq $currentIdentity -or [string]::IsNullOrWhiteSpace($currentIdentity.Name)) {
+    throw "Unable to resolve the current Windows account for the scheduled-task principal."
+  }
+  $userId = $currentIdentity.Name
   $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Days 3650) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
