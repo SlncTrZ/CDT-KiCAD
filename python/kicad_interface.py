@@ -665,6 +665,7 @@ class KiCADInterface(SchematicHandlersMixin):
             "export_odb": self._handle_export_odb,
             "export_ipcd356": self._handle_export_ipcd356,
             "export_gencad": self._handle_export_gencad,
+            "export_position_file": self._handle_export_position_file,
             "export_pos": self._handle_export_pos,
             "export_pcb_pdf": self._handle_export_pcb_pdf,
             "export_pcb_svg": self._handle_export_pcb_svg,
@@ -3812,6 +3813,97 @@ class KiCADInterface(SchematicHandlersMixin):
         except Exception as e:
             logger.error(f"Error exporting GenCAD: {e}")
             return {"success": False, "message": str(e)}
+
+    def _handle_export_position_file(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Compatibility wrapper for the legacy export_position_file MCP tool.
+
+        The public TypeScript schema predates kicad-cli's current vocabulary:
+        top/bottom vs front/back, CSV/ASCII vs lowercase, and inch/mil vs
+        in/mm. Keep that public contract routable while delegating the actual
+        export to the richer export_pos implementation.
+        """
+        import csv
+
+        normalized = dict(params)
+        side = normalized.get("side")
+        if side is not None:
+            normalized["side"] = {"top": "front", "bottom": "back", "both": "both"}.get(
+                str(side).lower(), str(side).lower()
+            )
+
+        output_format = str(normalized.get("format") or "CSV").lower()
+        normalized["format"] = output_format
+
+        units = str(normalized.get("units") or "mm").lower()
+        convert_to_mil = units == "mil"
+        normalized["units"] = "in" if units in {"inch", "mil"} else units
+
+        result = self._handle_export_pos(normalized)
+        if not result.get("success") or not convert_to_mil:
+            return result
+
+        output_path = result.get("outputPath")
+        if not output_path:
+            return {
+                "success": False,
+                "message": "Position export succeeded but returned no outputPath for mil conversion",
+            }
+
+        path = Path(output_path)
+        try:
+            if output_format == "csv":
+                with path.open("r", encoding="utf-8", newline="") as handle:
+                    rows = list(csv.reader(handle))
+                if not rows:
+                    raise ValueError("empty position CSV")
+                header = rows[0]
+                x_index = header.index("PosX")
+                y_index = header.index("PosY")
+                for row in rows[1:]:
+                    if len(row) > max(x_index, y_index):
+                        row[x_index] = f"{float(row[x_index]) * 1000:.6f}"
+                        row[y_index] = f"{float(row[y_index]) * 1000:.6f}"
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle, lineterminator="\n")
+                    writer.writerows(rows)
+            elif output_format == "ascii":
+                import re
+
+                lines = path.read_text(encoding="utf-8").splitlines()
+                row_pattern = re.compile(
+                    r"^(?P<prefix>.*\S)\s+"
+                    r"(?P<x>-?\d+(?:\.\d+)?)\s+"
+                    r"(?P<y>-?\d+(?:\.\d+)?)\s+"
+                    r"(?P<rot>-?\d+(?:\.\d+)?)\s+"
+                    r"(?P<side>\S+)\s*$"
+                )
+                for i, line in enumerate(lines):
+                    if line.startswith("## Unit = inches"):
+                        lines[i] = line.replace("## Unit = inches", "## Unit = mils", 1)
+                    elif line and not line.startswith("#"):
+                        match = row_pattern.match(line)
+                        if match:
+                            x_value = float(match.group("x")) * 1000
+                            y_value = float(match.group("y")) * 1000
+                            lines[i] = (
+                                f"{match.group('prefix')} "
+                                f"{x_value:.4f} {y_value:.4f} "
+                                f"{match.group('rot')} {match.group('side')}"
+                            )
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            else:
+                return {
+                    "success": False,
+                    "message": f"Legacy mil conversion is unsupported for format: {output_format}",
+                }
+        except (OSError, ValueError, StopIteration) as exc:
+            return {
+                "success": False,
+                "message": f"Failed to convert exported position file to mil: {exc}",
+            }
+
+        result["units"] = "mil"
+        return result
 
     def _handle_export_pos(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a component placement (position) file via kicad-cli
