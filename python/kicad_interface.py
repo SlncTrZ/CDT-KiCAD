@@ -584,7 +584,7 @@ class KiCADInterface(SchematicHandlersMixin):
             "check_clearance": self.design_rule_commands.check_clearance,
             "set_layer_constraints": self.design_rule_commands.set_layer_constraints,
             # Export commands
-            "export_gerber": self.export_commands.export_gerber,
+            "export_gerber": self._handle_export_gerber_compat,
             "export_pdf": self.export_commands.export_pdf,
             "export_svg": self.export_commands.export_svg,
             "export_3d": self.export_commands.export_3d,
@@ -3360,6 +3360,111 @@ class KiCADInterface(SchematicHandlersMixin):
         except Exception as e:
             logger.error(f"Error exporting netlist: {e}")
             return {"success": False, "message": str(e)}
+
+    def _handle_export_gerber_compat(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Compatibility path for the legacy export_gerber MCP tool.
+
+        The original SWIG plotter path reported layer names as success even when
+        it emitted no files. Delegate manufacturing output to kicad-cli and
+        verify that at least one Gerber artifact exists before claiming success.
+        Legacy option defaults and result shape are preserved.
+        """
+        output_dir = params.get("outputDir")
+        if not output_dir:
+            return {
+                "success": False,
+                "message": "Missing output directory",
+                "errorDetails": "outputDir parameter is required",
+            }
+
+        board_path = self._current_board_path()
+        if not board_path:
+            return {
+                "success": False,
+                "message": "No board is loaded",
+                "errorDetails": "Load or create a board first",
+            }
+
+        layers = params.get("layers")
+        if not layers and self.board:
+            try:
+                layers = [
+                    self.board.GetLayerName(layer_id)
+                    for layer_id in range(pcbnew.PCB_LAYER_ID_COUNT)
+                    if self.board.IsLayerEnabled(layer_id)
+                ]
+            except Exception as exc:
+                logger.warning("Could not enumerate enabled board layers for Gerber export: %s", exc)
+                layers = None
+
+        cli_params: Dict[str, Any] = {
+            "outputDir": output_dir,
+            "boardPath": board_path,
+            "layers": layers,
+            "useDrillFileOrigin": bool(params.get("useAuxOrigin", False)),
+            # Legacy export_gerber defaulted to KiCad-style extensions unless
+            # useProtelExtensions was explicitly true.
+            "noProtelExt": not bool(params.get("useProtelExtensions", False)),
+        }
+        gerbers = self._handle_export_gerbers(cli_params)
+        if not gerbers.get("success"):
+            return gerbers
+
+        output_path = Path(gerbers["outputDir"])
+        emitted = sorted(
+            p.name
+            for p in output_path.iterdir()
+            if p.is_file()
+        )
+        job_files = [name for name in emitted if name.lower().endswith(".gbrjob")]
+        gerber_files = [name for name in emitted if name not in job_files]
+
+        if not gerber_files:
+            return {
+                "success": False,
+                "message": "Gerber export produced no manufacturing files",
+                "errorDetails": (
+                    "kicad-cli returned success but no Gerber artifacts were found "
+                    f"in {output_path}"
+                ),
+                "outputDir": str(output_path),
+            }
+
+        generate_map_file = bool(params.get("generateMapFile", False))
+        if not generate_map_file:
+            for name in job_files:
+                try:
+                    (output_path / name).unlink()
+                except OSError as exc:
+                    logger.warning("Could not remove unrequested Gerber job file %s: %s", name, exc)
+            job_files = []
+
+        drill_files: List[str] = []
+        warnings: List[str] = []
+        if bool(params.get("generateDrillFiles", True)):
+            drill = self._handle_export_drill(
+                {"outputDir": str(output_path), "boardPath": board_path}
+            )
+            if drill.get("success"):
+                drill_files = list(drill.get("files") or [])
+            else:
+                warnings.append(
+                    drill.get("message") or "Requested drill generation did not complete"
+                )
+
+        result: Dict[str, Any] = {
+            "success": True,
+            "message": "Exported Gerber files",
+            "files": {
+                "gerber": gerber_files,
+                "drill": drill_files,
+                "map": job_files,
+            },
+            "outputDir": str(output_path),
+        }
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     def _handle_export_gerbers(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Plot multiple Gerbers for a PCB via kicad-cli (`pcb export gerbers`).
