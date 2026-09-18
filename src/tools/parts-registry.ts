@@ -21,6 +21,7 @@ import { z } from "zod";
 import { existsSync, statSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { logger } from "../logger.js";
+import { PathContainmentError, resolveContainedPath, trustedIoRoots } from "../path-policy.js";
 
 // ---- registry configuration --------------------------------------------- //
 
@@ -392,13 +393,31 @@ Files are written to dest_dir with a sensible filename; returns the saved path(s
         .describe("Existing destination directory to write the file into (must already exist)"),
     },
     async (args: { id: string; format: "kicad_mod" | "kicad_sym" | "step"; dest_dir: string }) => {
-      // Validate destination directory up front.
-      if (!existsSync(args.dest_dir) || !statSync(args.dest_dir).isDirectory()) {
+      let destDir: string;
+      try {
+        destDir = resolveContainedPath(args.dest_dir, trustedIoRoots());
+      } catch (error) {
+        if (error instanceof PathContainmentError) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Destination directory is outside the configured filesystem roots.",
+              },
+            ],
+            isError: true,
+          };
+        }
+        throw error;
+      }
+
+      // Validate destination directory up front, after canonical containment.
+      if (!existsSync(destDir) || !statSync(destDir).isDirectory()) {
         return {
           content: [
             {
               type: "text",
-              text: `Destination directory does not exist or is not a directory: ${args.dest_dir}`,
+              text: `Destination directory does not exist or is not a directory: ${destDir}`,
             },
           ],
           isError: true,
@@ -460,7 +479,7 @@ Files are written to dest_dir with a sensible filename; returns the saved path(s
         }
 
         const filename = filenameForAsset(url, args.id, mapping);
-        const savedPath = join(args.dest_dir, filename);
+        const savedPath = resolveContainedPath(join(destDir, filename), [destDir], destDir);
         writeFileSync(savedPath, buffer);
         logger.info(`Saved ${buffer.length} bytes to ${savedPath}`);
 

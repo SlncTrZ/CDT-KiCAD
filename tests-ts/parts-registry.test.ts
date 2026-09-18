@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { getCategory, getToolCategory, isRoutedTool } from "../src/tools/registry.js";
@@ -176,6 +176,7 @@ describe("parts-registry tool handlers (stubbed fetch)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env.PARTREEL_API_BASE;
+    delete process.env.KICAD_MCP_TRUSTED_ROOTS;
     rmSync(dest, { recursive: true, force: true });
   });
 
@@ -300,6 +301,29 @@ describe("parts-registry tool handlers (stubbed fetch)", () => {
     });
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain('No "step" file');
+  });
+
+  it("download rejects an untrusted destination before any fetch", async () => {
+    const previousTmp = process.env.TMPDIR;
+    const allowedTemp = join(dest, "allowed-temp");
+    mkdirSync(allowedTemp);
+    process.env.TMPDIR = allowedTemp;
+    delete process.env.KICAD_MCP_TRUSTED_ROOTS;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const res = await tools.get("download_registry_part")!({
+        id: "r_0603",
+        format: "kicad_mod",
+        dest_dir: dest,
+      });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("outside the configured filesystem roots");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      if (previousTmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmp;
+    }
   });
 
   it("download validates the destination directory before any fetch", async () => {
