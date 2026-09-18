@@ -6,6 +6,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 import { logger } from "../logger.js";
 
 // Command function type for KiCAD script calls
@@ -30,13 +31,18 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
       width: z.number().describe("Board width"),
       height: z.number().describe("Board height"),
       unit: z.enum(["mm", "mil", "inch"]).describe("Unit of measurement"),
+      operationId: z
+        .string()
+        .optional()
+        .describe("Stable semantic operation ID for timeout-safe retry/reconciliation"),
     },
-    async ({ width, height, unit }) => {
+    async ({ width, height, unit, operationId }) => {
       logger.debug(`Setting board size to ${width}x${height} ${unit}`);
       const result = await callKicadScript("set_board_size", {
         width,
         height,
         unit,
+        operationId,
       });
 
       return {
@@ -223,7 +229,7 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
           // For polygon
           points: z
             .array(
-              z.object({
+              strictObject({
                 x: z.number().describe("X coordinate"),
                 y: z.number().describe("Y coordinate"),
               }),
@@ -234,7 +240,7 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
           x: z.number().describe("X coordinate of top-left corner for rectangles (default: 0)"),
           y: z.number().describe("Y coordinate of top-left corner for rectangles (default: 0)"),
           unit: z.enum(["mm", "mil", "inch"]).describe("Unit of measurement"),
-        })
+        }).strict()
         .describe("Parameters for the outline shape"),
     },
     async ({ shape, params }) => {
@@ -273,12 +279,12 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
     "Replace the current Edge.Cuts board outline with a rectangle, rounded rectangle, circle or polygon.",
     {
       shape: z.enum(["rectangle", "circle", "polygon", "rounded_rectangle"]),
-      params: z.object({
+      params: strictObject({
         width: z.number().optional(),
         height: z.number().optional(),
         cornerRadius: z.number().optional(),
         radius: z.number().optional(),
-        points: z.array(z.object({ x: z.number(), y: z.number() })).optional(),
+        points: z.array(strictObject({ x: z.number(), y: z.number() })).optional(),
         x: z.number().optional(),
         y: z.number().optional(),
         centerX: z.number().optional(),
@@ -325,10 +331,10 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
       layer: z.string().optional(),
       width: z.number().optional(),
       unit: z.enum(["mm", "mil", "inch"]).optional(),
-      start: z.object({ x: z.number(), y: z.number() }).optional(),
-      end: z.object({ x: z.number(), y: z.number() }).optional(),
-      center: z.object({ x: z.number(), y: z.number() }).optional(),
-      position: z.object({ x: z.number(), y: z.number() }).optional(),
+      start: strictObject({ x: z.number(), y: z.number() }).optional(),
+      end: strictObject({ x: z.number(), y: z.number() }).optional(),
+      center: strictObject({ x: z.number(), y: z.number() }).optional(),
+      position: strictObject({ x: z.number(), y: z.number() }).optional(),
       text: z.string().optional(),
     },
     async (args) => {
@@ -349,7 +355,7 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
           x: z.number().describe("X coordinate"),
           y: z.number().describe("Y coordinate"),
           unit: z.enum(["mm", "mil", "inch"]).describe("Unit of measurement"),
-        })
+        }).strict()
         .describe("Position of the mounting hole"),
       diameter: z.number().describe("Diameter of the hole"),
       padDiameter: z.number().optional().describe("Optional diameter of the pad around the hole"),
@@ -386,7 +392,7 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
           x: z.number().describe("X coordinate"),
           y: z.number().describe("Y coordinate"),
           unit: z.enum(["mm", "mil", "inch"]).describe("Unit of measurement"),
-        })
+        }).strict()
         .describe("Position of the text"),
       layer: z.string().describe("Layer to place the text on"),
       size: z.number().describe("Text size"),
@@ -428,7 +434,7 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
       net: z.string().describe("Net name for the zone"),
       points: z
         .array(
-          z.object({
+          strictObject({
             x: z.number().describe("X coordinate"),
             y: z.number().describe("Y coordinate"),
           }),

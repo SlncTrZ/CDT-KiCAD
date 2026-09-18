@@ -8,21 +8,22 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 
 // ---- shared sub-schemas ------------------------------------------------- //
 
-const PadPosition = z.object({
+const PadPosition = strictObject({
   x: z.number().describe("X position in mm"),
   y: z.number().describe("Y position in mm"),
   angle: z.number().optional().describe("Rotation angle in degrees (default 0)"),
 });
 
-const PadSize = z.object({
+const PadSize = strictObject({
   w: z.number().describe("Width in mm"),
   h: z.number().describe("Height in mm"),
 });
 
-const PadSchema = z.object({
+const PadSchema = strictObject({
   number: z.string().describe("Pad number / name, e.g. '1', '2', 'A1'"),
   type: z
     .enum(["smd", "thru_hole", "np_thru_hole"])
@@ -36,7 +37,7 @@ const PadSchema = z.object({
   drill: z
     .union([
       z.number().describe("Round drill diameter in mm"),
-      z.object({ w: z.number(), h: z.number() }).describe("Oval drill w×h in mm"),
+      strictObject({ w: z.number(), h: z.number() }).describe("Oval drill w×h in mm"),
     ])
     .optional()
     .describe("Drill size (required for thru_hole pads)"),
@@ -52,7 +53,7 @@ const PadSchema = z.object({
     .describe("Corner radius ratio for roundrect shape (0.0–0.5, default 0.25)"),
 });
 
-const RectSchema = z.object({
+const RectSchema = strictObject({
   x1: z.number().describe("Left X in mm"),
   y1: z.number().describe("Top Y in mm"),
   x2: z.number().describe("Right X in mm"),
@@ -90,11 +91,11 @@ export function registerFootprintTools(server: McpServer, callKicadScript: Funct
         "Fab-layer rectangle on F.Fab (shows component body)",
       ),
       refPosition: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .optional()
         .describe("Position of the REF** text (default: 0, -1.27)"),
       valuePosition: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .optional()
         .describe("Position of the Value text (default: 0, 1.27)"),
       overwrite: z
@@ -123,7 +124,7 @@ export function registerFootprintTools(server: McpServer, callKicadScript: Funct
   );
 
   // ── add_footprint_3d_model ────────────────────────────────────────────── //
-  const Xyz = z.object({
+  const Xyz = strictObject({
     x: z.number(),
     y: z.number(),
     z: z.number(),
@@ -260,7 +261,7 @@ export function registerFootprintTools(server: McpServer, callKicadScript: Funct
       drill: z
         .union([
           z.number().describe("Round drill diameter in mm"),
-          z.object({ w: z.number(), h: z.number() }).describe("Oval drill"),
+          strictObject({ w: z.number(), h: z.number() }).describe("Oval drill"),
         ])
         .optional()
         .describe("New drill size (for THT pads)"),

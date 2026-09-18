@@ -1,10 +1,9 @@
 # CDT-KiCAD CI
 #
-# Fast honest lanes: TypeScript build, lint, unit/contract tests and the
-# generated tool-inventory check. The full Python bridge suite needs a real
-# KiCAD (pcbnew) install, so CI only byte-compiles the bridge and leaves the
-# 1500+ behavioral tests to the KiCAD-bearing local lane
-# (pytest tests/ -v with KiCAD 9/10 on PATH).
+# Fast deterministic contract/unit lanes, Linux compile sanity, and the full
+# Python behavioral suite on Windows. Native pcbnew/IPC acceptance is intentionally
+# separate: .github/workflows/native-windows.yml requires a dedicated
+# self-hosted Windows + KiCad runner and must not be inferred from this CI.
 
 name: ci
 
@@ -27,8 +26,10 @@ jobs:
       - run: npm run lint:ts
       - run: npm run test:ts
       - run: npm run docs:tools:check
+      - run: npm run test:queue-load
 
   python-compile:
+    # Cheap cross-platform syntax sanity. This is not behavioral/native PASS.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,3 +37,20 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m compileall -q python scripts/download_jlcpcb.py
+
+  python-behavioral:
+    # The suite contains Windows-path/native integration assumptions, so the
+    # full behavioral gate runs on its proper OS rather than pretending a
+    # Linux collection failure is useful coverage.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m compileall -q python scripts/download_jlcpcb.py
+      - name: Full behavioral suite (verified baseline quarantines only)
+        run: python scripts/run-python-behavioral.py

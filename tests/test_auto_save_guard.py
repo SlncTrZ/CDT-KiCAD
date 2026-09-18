@@ -20,6 +20,7 @@ process). Behaviour exercised here:
 import os
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -298,6 +299,48 @@ def test_disk_signature_rehashes_when_mtime_advances_with_same_content(iface, bo
     assert sig2 is not None
     assert sig2[0] == new_mtime_ns
     assert sig2[1] == sig1[1]  # content unchanged → hash unchanged
+
+
+def test_sync_self_save_refreshes_signature_without_second_auto_save(iface, board_file, tmp_path):
+    """A provider-owned sync save must not look like an external edit.
+
+    sync_schematic_to_board persists with board.Save() itself. The persisted
+    bytes become the new external-edit baseline, and the generic dispatcher
+    must not issue a redundant second auto-save.
+    """
+    schematic = tmp_path / "test.kicad_sch"
+    schematic.write_text("(kicad_sch)\n")
+
+    iface.board = _fake_board(str(board_file))
+    iface.board.GetFootprints.return_value = []
+    net_info = MagicMock()
+    net_info.NetsByName.return_value = MagicMock()
+    iface.board.GetNetInfo.return_value = net_info
+
+    iface._record_board_signature()
+    before = iface._board_disk_signature
+    assert before is not None
+
+    iface.board.Save.side_effect = lambda path: Path(path).write_text(
+        "(kicad_pcb ; persisted by sync)\n"
+    )
+
+    with (
+        patch.object(iface, "_build_hierarchical_pad_net_map", return_value=({}, set())),
+        patch.object(iface, "_add_missing_footprints_from_schematic", return_value=([], [])),
+        patch("commands.schematic_handlers.preserve_project_settings", return_value=nullcontext()),
+    ):
+        result = iface._handle_sync_schematic_to_board({"schematicPath": str(schematic)})
+
+    assert result["success"] is True
+    assert iface._board_disk_signature == iface._disk_signature(str(board_file))
+    assert iface._board_disk_signature != before
+    assert "sync_schematic_to_board" not in iface._BOARD_MUTATING_COMMANDS
+    assert iface._dirty_state(str(board_file))["diskChangedExternally"] is False
+
+    # A later real external content change is still detected.
+    board_file.write_text("(kicad_pcb ; changed externally after sync)\n")
+    assert iface._dirty_state(str(board_file))["diskChangedExternally"] is True
 
 
 # ---------------------------------------------------------------------------

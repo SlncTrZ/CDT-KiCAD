@@ -161,6 +161,9 @@ class ExportCommands:
             black_and_white = params.get("blackAndWhite", False)
             frame_reference = params.get("frameReference", True)
             page_size = params.get("pageSize", "A4")
+            # Receipt semantics live in the Node bridge; retain schema parity
+            # for callers using the Python JSON-RPC surface directly.
+            _operation_id = params.get("operationId", params.get("operation_id"))
 
             if not output_path:
                 return {

@@ -3,6 +3,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 
 export function registerSchematicHierarchyTools(server: McpServer, callKicadScript: Function) {
   // Link an existing sub-sheet into a parent
@@ -14,11 +15,11 @@ export function registerSchematicHierarchyTools(server: McpServer, callKicadScri
       subsheetPath: z.string().describe("Path to the existing sub-sheet .kicad_sch to reference"),
       sheetName: z.string().optional().default("Sheet").describe("Display name for the sheet"),
       position: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .optional()
         .describe("Top-left of the sheet box in mm (default 50,50)"),
       size: z
-        .object({ width: z.number(), height: z.number() })
+        .object({ width: z.number(), height: z.number() }).strict()
         .optional()
         .describe("Sheet box size in mm (default 80x50)"),
     },
@@ -112,8 +113,8 @@ export function registerSchematicHierarchyTools(server: McpServer, callKicadScri
       parentSchematicPath: z.string().describe("Path to the parent .kicad_sch"),
       subsheetPath: z.string().describe("Path for the new sub-sheet .kicad_sch to create"),
       sheetName: z.string().optional().default("Sheet").describe("Display name for the sheet"),
-      position: z.object({ x: z.number(), y: z.number() }).optional(),
-      size: z.object({ width: z.number(), height: z.number() }).optional(),
+      position: strictObject({ x: z.number(), y: z.number() }).optional(),
+      size: strictObject({ width: z.number(), height: z.number() }).optional(),
       metadata: z
         .record(z.string(), z.any())
         .optional()

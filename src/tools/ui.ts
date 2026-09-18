@@ -5,6 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { logger } from "../logger.js";
+import { formatKicadResult } from "./tool-response.js";
 
 export function registerUITools(server: McpServer, callKicadScript: Function) {
   // Get MCP/KiCAD backend and loaded file state
@@ -23,6 +24,42 @@ export function registerUITools(server: McpServer, callKicadScript: Function) {
           },
         ],
       };
+    },
+  );
+
+  server.tool(
+    "reconnect_backend",
+    "Reconnect an IPC-owned board session only when the live KiCAD document identity still matches the pinned board. Never falls back to SWIG.",
+    {},
+    async () => {
+      logger.info("Reconnecting KiCAD backend session");
+      const result = await callKicadScript("reconnect_backend", {});
+      return formatKicadResult(result);
+    },
+  );
+
+  server.tool(
+    "rebind_backend_session",
+    "Explicitly rebind backend ownership. IPC requires matching live document identity; SWIG requires the same board path and explicit confirmation before discarding possibly-unsaved live GUI state.",
+    {
+      targetBackend: z.enum(["ipc", "swig"]),
+      boardPath: z
+        .string()
+        .optional()
+        .describe("Expected .kicad_pcb identity; defaults to pinned path"),
+      confirmDiscardLiveState: z
+        .boolean()
+        .optional()
+        .describe("Required for IPC->SWIG rebind because unsaved GUI edits may be discarded"),
+    },
+    async (args: {
+      targetBackend: "ipc" | "swig";
+      boardPath?: string;
+      confirmDiscardLiveState?: boolean;
+    }) => {
+      logger.info("Explicitly rebinding KiCAD backend session");
+      const result = await callKicadScript("rebind_backend_session", args);
+      return formatKicadResult(result);
     },
   );
 

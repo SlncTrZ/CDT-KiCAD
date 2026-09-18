@@ -9,8 +9,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 
-const PinSchema = z.object({
+const PinSchema = strictObject({
   name: z.string().describe("Pin name, e.g. 'VCC', 'GND', 'IN+', '~' for unnamed"),
   number: z.union([z.string(), z.number()]).describe("Pin number, e.g. '1', '2', 'A1'"),
   type: z
@@ -38,7 +39,7 @@ const PinSchema = z.object({
         .describe(
           "Direction the pin wire extends FROM the symbol body: 0=right, 90=up, 180=left, 270=down",
         ),
-    })
+    }).strict()
     .describe("Pin endpoint position (where the wire connects)"),
   length: z.number().optional().describe("Pin length in mm (default 2.54)"),
   shape: z
@@ -57,7 +58,7 @@ const PinSchema = z.object({
     .describe("Pin graphic shape (default: line)"),
 });
 
-const RectSchema = z.object({
+const RectSchema = strictObject({
   x1: z.number(),
   y1: z.number(),
   x2: z.number(),
@@ -69,8 +70,8 @@ const RectSchema = z.object({
     .describe("Fill type (default: background)"),
 });
 
-const PolylineSchema = z.object({
-  points: z.array(z.object({ x: z.number(), y: z.number() })).describe("List of XY points in mm"),
+const PolylineSchema = strictObject({
+  points: z.array(strictObject({ x: z.number(), y: z.number() })).describe("List of XY points in mm"),
   width: z.number().optional().describe("Stroke width in mm (default 0.254)"),
   fill: z.enum(["none", "outline", "background"]).optional(),
 });
@@ -224,7 +225,7 @@ export function registerSymbolCreatorTools(server: McpServer, callKicadScript: F
       propertyName: z.string().describe("Property name (e.g. Manufacturer, MPN)"),
       propertyValue: z.string().describe("Property value"),
       position: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .optional()
         .describe(
           "Position {x, y} in mm. Omit to leave an existing property where it is (new: 0, 0)",

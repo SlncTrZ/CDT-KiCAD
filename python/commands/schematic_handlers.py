@@ -3198,6 +3198,13 @@ class SchematicHandlersMixin:
             with preserve_project_settings(board_path):
                 board.Save(board_path)
 
+            # This command persists the board itself. Refresh the external-edit
+            # baseline immediately after our own write so the next guarded save
+            # does not mistake this provider-owned change for an external edit.
+            # The generic dispatcher intentionally does not auto-save this
+            # command a second time.
+            self._record_board_signature()
+
             # If board was loaded fresh, update internal reference
             if params.get("boardPath"):
                 self.board = board

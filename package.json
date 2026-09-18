@@ -15,6 +15,7 @@
     "test:ts": "vitest run",
     "test:ts:watch": "vitest",
     "test:py": "pytest tests/ -v",
+    "test:queue-load": "npm run build && node scripts/queue-load-fixture.mjs",
     "test:coverage": "pytest tests/ --cov=python --cov-report=html --cov-report=term",
     "lint": "npm run lint:ts && npm run lint:py",
     "lint:ts": "eslint src/",
@@ -24,6 +25,9 @@
     "format": "prettier --write 'src/**/*.ts' && black python/",
     "docs:tools": "node scripts/generate-tool-inventory.mjs",
     "docs:tools:check": "node scripts/generate-tool-inventory.mjs --check",
+    "release:fixture": "npm run build && node scripts/release-acceptance.mjs fixture",
+    "release:score": "npm run build && node scripts/release-acceptance.mjs score",
+    "release:manifest": "npm run build && node scripts/release-acceptance.mjs manifest",
     "prepare": "npm run build",
     "pretest": "npm run build"
   },

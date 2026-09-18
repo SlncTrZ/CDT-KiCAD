@@ -40,6 +40,9 @@ const DOC_PATH = join(ROOT, "docs", "TOOL_INVENTORY.md");
 const { toolCategories, directToolNames, getRegistryStats } = await import(
   new URL("../dist/tools/registry.js", import.meta.url).href
 );
+const { BASELINE_UNINDEXED_AUDIT } = await import(
+  new URL("../dist/tools/discovery-audit.js", import.meta.url).href
+);
 
 /**
  * Human-friendly section titles, in the order they should appear.
@@ -162,7 +165,11 @@ function accessFor(name) {
   if (category && isDirect) return `Essential + \`${category.name}\``;
   if (category) return `\`${category.name}\``;
   if (isDirect) return "Essential";
-  return "Not indexed";
+
+  const audit = BASELINE_UNINDEXED_AUDIT[name];
+  if (audit?.disposition === "intentional-direct-only") return "Intentional direct-only";
+  if (audit?.disposition === "obsolete-duplicate") return "Obsolete / duplicate";
+  return "Unclassified";
 }
 
 function table(tools, kept) {
@@ -194,9 +201,21 @@ function render() {
   }
 
   const total = [...byFile.values()].reduce((n, t) => n + t.length, 0);
-  const notIndexed = [...byFile.values()]
-    .flat()
-    .filter((t) => accessFor(t.name) === "Not indexed").length;
+  const unindexed = [...byFile.values()].flat().filter((t) => {
+    const access = accessFor(t.name);
+    return (
+      access === "Intentional direct-only" ||
+      access === "Obsolete / duplicate" ||
+      access === "Unclassified"
+    );
+  });
+  const intentionalDirectOnly = unindexed.filter(
+    (t) => accessFor(t.name) === "Intentional direct-only",
+  ).length;
+  const obsoleteDuplicate = unindexed.filter(
+    (t) => accessFor(t.name) === "Obsolete / duplicate",
+  ).length;
+  const unclassified = unindexed.filter((t) => accessFor(t.name) === "Unclassified").length;
 
   const version = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8")).version;
   const today = new Date().toISOString().slice(0, 10);
@@ -229,12 +248,18 @@ function render() {
   out.push("  `src/tools/registry.ts`.");
   out.push("- **Essential + `category`** - both of the above. A small number of very common");
   out.push("  schematic tools are deliberately in both lists.");
-  out.push(`- **Not indexed** - the tool works, but \`search_tools\` cannot find it yet.`);
   out.push(
-    `  There are ${notIndexed} of these. A test in \`tests-ts/registry-completeness.test.ts\``,
+    "- **Intentional direct-only** - a meta discovery control that is called directly and intentionally excluded from its own keyword catalogue.",
   );
-  out.push("  freezes this number so it can only shrink; adding a category entry for one of");
-  out.push("  them is a welcome contribution.");
+  out.push(
+    "- **Obsolete / duplicate** - retained callable compatibility surface with evidence that it should not be advertised as a preferred tool.",
+  );
+  out.push(
+    "- **Unclassified** - registry drift. This is an acceptance failure until the tool is indexed or explicitly classified.",
+  );
+  out.push(
+    "  The D12 baseline classification is source-controlled in \`src/tools/discovery-audit.ts\` and enforced by \`tests-ts/registry-completeness.test.ts\`.",
+  );
   out.push("");
   out.push("---");
   out.push("");
@@ -273,7 +298,9 @@ function render() {
     out.push(`| \`${c.name}\` | ${c.tool_count} |`);
   }
   out.push(`| **Indexed total** | **${stats.total_tools}** |`);
-  out.push(`| Registered but not indexed | ${notIndexed} |`);
+  out.push(`| Intentional direct-only | ${intentionalDirectOnly} |`);
+  out.push(`| Obsolete / duplicate | ${obsoleteDuplicate} |`);
+  out.push(`| **Unclassified** | **${unclassified}** |`);
   out.push(`| **Registered total** | **${total}** |`);
   out.push("");
   return out.join("\n") + "\n";

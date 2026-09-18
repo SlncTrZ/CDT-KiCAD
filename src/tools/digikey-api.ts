@@ -6,12 +6,11 @@
  * every tool schema below: a key passed as a tool argument would be recorded in
  * the conversation, in the MCP log, and in anything replaying the call.
  *
- * Absent from the schema means ignored, not rejected — zod strips unknown keys,
- * so a caller that passes `clientSecret` anyway gets a successful call with the
- * argument silently dropped. The Python side detects credential-shaped argument
- * names and returns a `warnings` entry telling the caller to rotate the value,
- * because by then it is already in the transcript. Adding the fields to the
- * schema so they could be rejected would defeat the point of leaving them out.
+ * Credential fields stay absent from every tool schema. The provider-wide MCP
+ * boundary uses strict Zod objects at every declared object boundary, so a caller
+ * that passes `clientSecret` (or any other undeclared argument) is rejected before
+ * this handler runs. The Python-side credential-name detection
+ * remains defense-in-depth for legacy/direct bridge callers.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -22,7 +21,7 @@ const localeSchema = z
     site: z.string().describe("Digi-Key site, e.g. US, DE, UK"),
     language: z.string().describe("Language code, e.g. en, de"),
     currency: z.string().describe("Currency code, e.g. USD, EUR"),
-  })
+  }).strict()
   .partial()
   .optional()
   .describe(

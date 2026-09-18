@@ -6,11 +6,109 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import express from "express";
 import { spawn, exec, execSync, ChildProcess } from "child_process";
+import { randomUUID } from "crypto";
 import { existsSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { logger } from "./logger.js";
 import { computeCommandTimeout, DEFAULT_COMMAND_TIMEOUT_MS } from "./command-timeout.js";
 import { PROVIDER_ID, PROVIDER_VERSION } from "./provider-contract.js";
+import { createContractToolTarget } from "./tool-contract-boundary.js";
+import {
+  commandMayMutate,
+  decorateWithReceipt,
+  hasAutomaticReconciliation,
+  OperationBlockedError,
+  OperationReceiptStore,
+  OperationUncertainError,
+  splitOperationId,
+} from "./operation-receipts.js";
+import { ensureKicadSuccess } from "./tools/tool-response.js";
+
+export const DEFAULT_MAX_QUEUE_DEPTH = 32;
+export const DEFAULT_ENQUEUE_DEADLINE_MS = 120_000;
+
+export type BridgeRuntimeEvent = "completed" | "timeout" | "error" | "rejected";
+
+export interface BridgeRuntimeMetric {
+  event: BridgeRuntimeEvent;
+  command: string;
+  request_id: number;
+  queue_depth: number;
+  queue_wait_ms: number;
+  execution_ms: number;
+  total_latency_ms: number;
+  timeout_count: number;
+  error_count: number;
+  rejection_count: number;
+}
+
+export interface BridgeRuntimeMetricsSnapshot {
+  queue_depth: number;
+  in_flight: number;
+  max_queue_depth: number;
+  enqueue_deadline_ms: number;
+  timeout_count: number;
+  error_count: number;
+  rejection_count: number;
+}
+
+export interface BridgeRuntimeOptions {
+  maxQueueDepth?: number;
+  enqueueDeadlineMs?: number;
+  now?: () => number;
+  metricsSink?: (metric: BridgeRuntimeMetric) => void;
+}
+
+type ProviderRuntimeErrorKind =
+  | "rate_limited"
+  | "timeout"
+  | "provider_unavailable"
+  | "internal_error";
+
+/**
+ * Bridge-local error carrying the canonical provider error fields.
+ * MCP callers still receive the SDK's tool error envelope, while direct
+ * bridge consumers/tests can inspect kind + retryable deterministically.
+ */
+export class ProviderRuntimeError extends Error {
+  public readonly providerMessage: string;
+
+  constructor(
+    public readonly kind: ProviderRuntimeErrorKind,
+    public readonly retryable: boolean,
+    message: string,
+    public readonly details?: Readonly<Record<string, unknown>>,
+  ) {
+    // The MCP SDK converts thrown tool errors into isError results using only
+    // Error.message. Encode the canonical provider payload there so kind and
+    // retryability survive the SDK boundary as parseable JSON text.
+    const payload = {
+      success: false,
+      kind,
+      retryable,
+      message,
+      ...(details ? { details } : {}),
+    };
+    super(JSON.stringify(payload));
+    this.name = "ProviderRuntimeError";
+    this.providerMessage = message;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      success: false,
+      kind: this.kind,
+      retryable: this.retryable,
+      message: this.providerMessage,
+      ...(this.details ? { details: this.details } : {}),
+    };
+  }
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
+}
 
 // Import tool registration functions
 import { registerHelpTools } from "./tools/help.js";
@@ -237,7 +335,12 @@ export class KiCADMcpServer {
       params: any;
       timeout: number;
       requestId: number;
+      operationId?: string;
+      mutating?: boolean;
+      reconciliationFor?: string;
     };
+    enqueuedAtMs?: number;
+    enqueueTimeoutHandle?: NodeJS.Timeout;
     resolve: Function;
     reject: Function;
   }> = [];
@@ -247,10 +350,29 @@ export class KiCADMcpServer {
   private nextInternalRequestId = 1;
   private currentRequestHandler: {
     requestId: number;
+    command?: string;
+    enqueuedAtMs?: number;
+    startedAtMs?: number;
     resolve: Function;
     reject: Function;
     timeoutHandle: NodeJS.Timeout;
+    params?: Record<string, unknown>;
+    operationId?: string;
+    mutating?: boolean;
+    reconciliationFor?: string;
+    timedOut?: boolean;
   } | null = null;
+  private readonly maxQueueDepth: number;
+  private readonly enqueueDeadlineMs: number;
+  private readonly now: () => number;
+  private readonly metricsSink: (metric: BridgeRuntimeMetric) => void;
+  private timeoutCount = 0;
+  private errorCount = 0;
+  private rejectionCount = 0;
+
+  /** Semantic operation receipts survive bridge correlation timeouts/retries. */
+  private readonly operationReceipts = new OperationReceiptStore();
+  private readonly lateOperationResults = new Map<string, any>();
 
   /** Resolved when Python prints {"type":"ready"} — stdin loop is live. */
   private readyPromise: Promise<void>;
@@ -268,9 +390,28 @@ export class KiCADMcpServer {
    * @param kicadScriptPath Path to the Python KiCAD interface script
    * @param logLevel Log level for the server
    */
-  constructor(kicadScriptPath: string, logLevel: "error" | "warn" | "info" | "debug" = "info") {
+  constructor(
+    kicadScriptPath: string,
+    logLevel: "error" | "warn" | "info" | "debug" = "info",
+    runtimeOptions: BridgeRuntimeOptions = {},
+  ) {
     // Set up the logger
     logger.setLogLevel(logLevel);
+
+    this.maxQueueDepth = positiveInteger(
+      runtimeOptions.maxQueueDepth ?? process.env.KICAD_MCP_MAX_QUEUE_DEPTH,
+      DEFAULT_MAX_QUEUE_DEPTH,
+    );
+    this.enqueueDeadlineMs = positiveInteger(
+      runtimeOptions.enqueueDeadlineMs ?? process.env.KICAD_MCP_ENQUEUE_DEADLINE_MS,
+      DEFAULT_ENQUEUE_DEADLINE_MS,
+    );
+    this.now = runtimeOptions.now ?? Date.now;
+    this.metricsSink =
+      runtimeOptions.metricsSink ??
+      ((metric) => {
+        logger.info(`bridge_metric ${JSON.stringify(metric)}`);
+      });
 
     // Check if KiCAD script exists
     this.kicadScriptPath = kicadScriptPath;
@@ -312,36 +453,40 @@ export class KiCADMcpServer {
   public registerAllOn(target: McpServer): void {
     logger.info("Registering KiCAD tools, resources, and prompts...");
 
+    const toolTarget = createContractToolTarget(target);
+    const callToolBackend = async (command: string, params: any): Promise<any> =>
+      ensureKicadSuccess(await this.callKicadScript(command, params));
+
     // SlncTrZ provider contract FIRST (help, system_status, system_capabilities)
-    registerHelpTools(target, () => this.callKicadScript("get_backend_state", {}));
+    registerHelpTools(toolTarget, () => callToolBackend("get_backend_state", {}));
 
     // Register router tools (for tool discovery and execution)
-    registerRouterTools(target, this.callKicadScript.bind(this));
+    registerRouterTools(toolTarget, callToolBackend);
 
-    // Register all tools
-    registerProjectTools(target, this.callKicadScript.bind(this));
-    registerBoardTools(target, this.callKicadScript.bind(this));
-    registerComponentTools(target, this.callKicadScript.bind(this));
-    registerRoutingTools(target, this.callKicadScript.bind(this));
-    registerDesignRuleTools(target, this.callKicadScript.bind(this));
-    registerExportTools(target, this.callKicadScript.bind(this));
-    registerSchematicTools(target, this.callKicadScript.bind(this));
-    registerLibraryTools(target, this.callKicadScript.bind(this));
-    registerSymbolLibraryTools(target, this.callKicadScript.bind(this));
-    registerSchematicHierarchyTools(target, this.callKicadScript.bind(this));
-    registerSchematicLayoutTools(target, this.callKicadScript.bind(this));
-    registerSchematicBatchTools(target, this.callKicadScript.bind(this));
-    registerJLCPCBApiTools(target, this.callKicadScript.bind(this));
-    registerDigiKeyApiTools(target, this.callKicadScript.bind(this));
-    registerPartsRegistryTools(target);
-    registerDatasheetTools(target, this.callKicadScript.bind(this));
-    registerFootprintTools(target, this.callKicadScript.bind(this));
-    registerSymbolCreatorTools(target, this.callKicadScript.bind(this));
-    registerUITools(target, this.callKicadScript.bind(this));
-    registerFreeroutingTools(target, this.callKicadScript.bind(this));
-    registerEagleTools(target, this.callKicadScript.bind(this));
-    registerPcbImportTools(target, this.callKicadScript.bind(this));
-    registerValidationTools(target, this.callKicadScript.bind(this));
+    // Register all tools through the provider-wide strict/error boundary.
+    registerProjectTools(toolTarget, callToolBackend);
+    registerBoardTools(toolTarget, callToolBackend);
+    registerComponentTools(toolTarget, callToolBackend);
+    registerRoutingTools(toolTarget, callToolBackend);
+    registerDesignRuleTools(toolTarget, callToolBackend);
+    registerExportTools(toolTarget, callToolBackend);
+    registerSchematicTools(toolTarget, callToolBackend);
+    registerLibraryTools(toolTarget, callToolBackend);
+    registerSymbolLibraryTools(toolTarget, callToolBackend);
+    registerSchematicHierarchyTools(toolTarget, callToolBackend);
+    registerSchematicLayoutTools(toolTarget, callToolBackend);
+    registerSchematicBatchTools(toolTarget, callToolBackend);
+    registerJLCPCBApiTools(toolTarget, callToolBackend);
+    registerDigiKeyApiTools(toolTarget, callToolBackend);
+    registerPartsRegistryTools(toolTarget);
+    registerDatasheetTools(toolTarget, callToolBackend);
+    registerFootprintTools(toolTarget, callToolBackend);
+    registerSymbolCreatorTools(toolTarget, callToolBackend);
+    registerUITools(toolTarget, callToolBackend);
+    registerFreeroutingTools(toolTarget, callToolBackend);
+    registerEagleTools(toolTarget, callToolBackend);
+    registerPcbImportTools(toolTarget, callToolBackend);
+    registerValidationTools(toolTarget, callToolBackend);
 
     // Register all resources
     registerProjectResources(target, this.callKicadScript.bind(this));
@@ -789,45 +934,252 @@ export class KiCADMcpServer {
     });
   }
 
+  /** Current bounded-queue counters for diagnostics and deterministic fixtures. */
+  public getBridgeRuntimeMetrics(): BridgeRuntimeMetricsSnapshot {
+    return {
+      queue_depth: this.requestQueue.length,
+      in_flight: this.processingRequest ? 1 : 0,
+      max_queue_depth: this.maxQueueDepth,
+      enqueue_deadline_ms: this.enqueueDeadlineMs,
+      timeout_count: this.timeoutCount,
+      error_count: this.errorCount,
+      rejection_count: this.rejectionCount,
+    };
+  }
+
+  private emitBridgeMetric(
+    event: BridgeRuntimeEvent,
+    command: string,
+    requestId: number,
+    enqueuedAtMs: number,
+    startedAtMs?: number,
+    endedAtMs = this.now(),
+  ): void {
+    const queueWaitEnd = startedAtMs ?? endedAtMs;
+    const metric: BridgeRuntimeMetric = {
+      event,
+      command,
+      request_id: requestId,
+      queue_depth: this.requestQueue.length,
+      queue_wait_ms: Math.max(0, queueWaitEnd - enqueuedAtMs),
+      execution_ms: startedAtMs === undefined ? 0 : Math.max(0, endedAtMs - startedAtMs),
+      total_latency_ms: Math.max(0, endedAtMs - enqueuedAtMs),
+      timeout_count: this.timeoutCount,
+      error_count: this.errorCount,
+      rejection_count: this.rejectionCount,
+    };
+
+    try {
+      this.metricsSink(metric);
+    } catch (error) {
+      logger.warn(
+        `Bridge metrics sink failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private expireQueuedRequest(requestId: number): void {
+    const index = this.requestQueue.findIndex((entry) => entry.request.requestId === requestId);
+    if (index < 0) return;
+
+    const [entry] = this.requestQueue.splice(index, 1);
+    if (entry.enqueueTimeoutHandle) clearTimeout(entry.enqueueTimeoutHandle);
+
+    const endedAtMs = this.now();
+    const enqueuedAtMs = entry.enqueuedAtMs ?? endedAtMs;
+    this.timeoutCount += 1;
+
+    const error = new ProviderRuntimeError(
+      "timeout",
+      true,
+      `KiCAD bridge queue wait exceeded ${this.enqueueDeadlineMs}ms for ${entry.request.command}`,
+      {
+        queue_depth: this.requestQueue.length,
+        enqueue_deadline_ms: this.enqueueDeadlineMs,
+      },
+    );
+    if (entry.request.operationId) {
+      this.operationReceipts.abandonBeforeDispatch(entry.request.operationId);
+    }
+    entry.reject(error);
+    this.emitBridgeMetric(
+      "timeout",
+      entry.request.command,
+      entry.request.requestId,
+      enqueuedAtMs,
+      undefined,
+      endedAtMs,
+    );
+
+    if (!this.processingRequest) {
+      setTimeout(() => this.processNextRequest(), 0);
+    }
+  }
+
   /**
-   * Call the KiCAD scripting interface to execute commands
+   * Call the KiCAD scripting interface to execute commands.
+   *
+   * The existing serializer remains one-at-a-time, but waiting work is bounded
+   * by both queue depth and a wall-clock enqueue deadline.
    *
    * @param command The command to execute
    * @param params The parameters for the command
    * @returns The result of the command execution
    */
-  private async callKicadScript(command: string, params: any): Promise<any> {
+  private async callKicadScript(command: string, rawParams: any): Promise<any> {
     return new Promise((resolve, reject) => {
-      // Check if Python process is running
+      const requestId = this.allocateInternalRequestId();
+      const enqueuedAtMs = this.now();
+
       if (!this.pythonProcess) {
         logger.error("Python process is not running");
-        reject(new Error("Python process for KiCAD scripting is not running"));
+        this.errorCount += 1;
+        const error = new ProviderRuntimeError(
+          "provider_unavailable",
+          true,
+          "Python process for KiCAD scripting is not running",
+        );
+        this.emitBridgeMetric("error", command, requestId, enqueuedAtMs, undefined, enqueuedAtMs);
+        reject(error);
         return;
       }
 
-      // Determine timeout based on command type (see src/command-timeout.ts).
+      let operationId: string | undefined;
+      let params: Record<string, unknown>;
+      try {
+        const split = splitOperationId(rawParams);
+        operationId = split.operationId;
+        params = split.params;
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      const mutating = commandMayMutate(command);
+      if (mutating) {
+        operationId = operationId ?? randomUUID();
+        const existing = this.operationReceipts.get(operationId);
+        if (existing) {
+          let begun;
+          try {
+            begun = this.operationReceipts.begin(operationId, command, params);
+          } catch (error) {
+            reject(error);
+            return;
+          }
+
+          if (begun.kind === "committed" || begun.kind === "failed") {
+            resolve(decorateWithReceipt(begun.receipt.result, begun.receipt));
+            return;
+          }
+          if (begun.kind === "uncertain") {
+            reject(new OperationUncertainError(begun.receipt));
+            return;
+          }
+          reject(new Error(`operation_id=${operationId} is already in flight`));
+          return;
+        }
+
+        const blocker = this.operationReceipts.firstUncertain();
+        if (blocker) {
+          reject(new OperationBlockedError(blocker));
+          return;
+        }
+      }
+
+      if (this.requestQueue.length >= this.maxQueueDepth) {
+        this.rejectionCount += 1;
+        const error = new ProviderRuntimeError(
+          "rate_limited",
+          true,
+          `KiCAD bridge queue is full (${this.maxQueueDepth} waiting requests)`,
+          {
+            queue_depth: this.requestQueue.length,
+            max_queue_depth: this.maxQueueDepth,
+          },
+        );
+        this.emitBridgeMetric(
+          "rejected",
+          command,
+          requestId,
+          enqueuedAtMs,
+          undefined,
+          enqueuedAtMs,
+        );
+        reject(error);
+        return;
+      }
+
+      if (mutating && operationId) {
+        try {
+          this.operationReceipts.begin(operationId, command, params);
+        } catch (error) {
+          reject(error);
+          return;
+        }
+      }
+
       const commandTimeout = computeCommandTimeout(command, params);
       if (commandTimeout !== DEFAULT_COMMAND_TIMEOUT_MS) {
         logger.info(`Using extended timeout (${commandTimeout / 1000}s) for command: ${command}`);
       }
 
-      // Add request to queue with timeout info
+      const enqueueTimeoutHandle = setTimeout(
+        () => this.expireQueuedRequest(requestId),
+        this.enqueueDeadlineMs,
+      );
+
       this.requestQueue.push({
         request: {
           command,
           params,
           timeout: commandTimeout,
-          requestId: this.allocateInternalRequestId(),
+          requestId,
+          operationId,
+          mutating,
         },
+        enqueuedAtMs,
+        enqueueTimeoutHandle,
         resolve,
         reject,
       });
 
-      // Process the queue if not already processing
       if (!this.processingRequest) {
         this.processNextRequest();
       }
     });
+  }
+
+  private enqueueReconciliation(
+    operationId: string,
+    command: string,
+    params: Record<string, unknown>,
+    lateResult: any,
+  ): void {
+    this.lateOperationResults.set(operationId, lateResult);
+    this.requestQueue.unshift({
+      request: {
+        command: "_reconcile_operation",
+        params: {
+          operation_id: operationId,
+          command,
+          params,
+          late_result: lateResult,
+        },
+        timeout: DEFAULT_COMMAND_TIMEOUT_MS,
+        requestId: this.allocateInternalRequestId(),
+        mutating: false,
+        reconciliationFor: operationId,
+      },
+      resolve: () => undefined,
+      reject: () => undefined,
+    });
+  }
+
+  private static backendOwner(result: any): string | undefined {
+    if (!result || typeof result !== "object") return undefined;
+    const owner = result.backend_owner ?? result._backend ?? result.backend;
+    return typeof owner === "string" ? owner : undefined;
   }
 
   /**
@@ -906,7 +1258,77 @@ export class KiCADMcpServer {
       clearTimeout(handler.timeoutHandle);
       this.currentRequestHandler = null;
       this.processingRequest = false;
-      handler.resolve(result);
+
+      if (!handler.timedOut && handler.command && handler.enqueuedAtMs !== undefined) {
+        const endedAtMs = this.now();
+        const failed = result?.success === false;
+        if (failed) this.errorCount += 1;
+        this.emitBridgeMetric(
+          failed ? "error" : "completed",
+          handler.command,
+          handler.requestId,
+          handler.enqueuedAtMs,
+          handler.startedAtMs,
+          endedAtMs,
+        );
+      }
+
+      if (handler.reconciliationFor) {
+        const operationId = handler.reconciliationFor;
+        const lateResult = this.lateOperationResults.get(operationId);
+        const backendOwner =
+          KiCADMcpServer.backendOwner(result) ?? KiCADMcpServer.backendOwner(lateResult);
+        if (result?.success && result?.state === "committed") {
+          this.operationReceipts.markCommitted(operationId, lateResult, backendOwner, {
+            strategy: "read_after_write",
+            evidence: result.evidence,
+          });
+          this.lateOperationResults.delete(operationId);
+        } else if (result?.state === "failed") {
+          this.operationReceipts.markFailed(operationId, lateResult ?? result, backendOwner, {
+            strategy: "read_after_write",
+            evidence: result.evidence,
+          });
+          this.lateOperationResults.delete(operationId);
+        } else {
+          this.operationReceipts.markUncertain(operationId, backendOwner);
+        }
+        handler.resolve(result);
+        setTimeout(() => this.processNextRequest(), 0);
+        return;
+      }
+
+      if (handler.timedOut) {
+        if (handler.operationId) {
+          const backendOwner = KiCADMcpServer.backendOwner(result);
+          if (result?.success === false) {
+            this.operationReceipts.markFailed(handler.operationId, result, backendOwner);
+          } else if (handler.command && hasAutomaticReconciliation(handler.command)) {
+            this.enqueueReconciliation(
+              handler.operationId,
+              handler.command,
+              handler.params ?? {},
+              result,
+            );
+          } else {
+            this.operationReceipts.markUncertain(handler.operationId, backendOwner);
+          }
+        }
+        setTimeout(() => this.processNextRequest(), 0);
+        return;
+      }
+
+      let deliveredResult = result;
+      if (handler.operationId) {
+        const backendOwner = KiCADMcpServer.backendOwner(result);
+        const receipt =
+          result?.success === false
+            ? this.operationReceipts.markFailed(handler.operationId, result, backendOwner)
+            : this.operationReceipts.markCommitted(handler.operationId, result, backendOwner);
+        deliveredResult = decorateWithReceipt(result, receipt);
+      }
+
+      handler.resolve(deliveredResult);
       setTimeout(() => this.processNextRequest(), 0);
       return;
     }
@@ -933,20 +1355,58 @@ export class KiCADMcpServer {
       return;
     }
 
-    // Set processing flag
+    const queued = this.requestQueue[0];
+    if (queued.request.mutating && !queued.request.reconciliationFor) {
+      const blocker = this.operationReceipts.firstUncertain(queued.request.operationId);
+      if (blocker) {
+        const blocked = this.requestQueue.shift()!;
+        if (blocked.enqueueTimeoutHandle) clearTimeout(blocked.enqueueTimeoutHandle);
+        if (blocked.request.operationId) {
+          this.operationReceipts.abandonBeforeDispatch(blocked.request.operationId);
+        }
+
+        const endedAtMs = this.now();
+        const enqueuedAtMs = blocked.enqueuedAtMs ?? endedAtMs;
+        this.rejectionCount += 1;
+        const error = new OperationBlockedError(blocker);
+        blocked.reject(error);
+        this.emitBridgeMetric(
+          "rejected",
+          blocked.request.command,
+          blocked.request.requestId,
+          enqueuedAtMs,
+          undefined,
+          endedAtMs,
+        );
+        setTimeout(() => this.processNextRequest(), 0);
+        return;
+      }
+    }
+
     this.processingRequest = true;
 
-    // Get the next request
-    const { request, resolve, reject } = this.requestQueue.shift()!;
+    const entry = this.requestQueue.shift()!;
+    const { request, resolve, reject } = entry;
+    if (entry.enqueueTimeoutHandle) clearTimeout(entry.enqueueTimeoutHandle);
+    const startedAtMs = this.now();
+    const enqueuedAtMs = entry.enqueuedAtMs ?? startedAtMs;
+    let dispatchAttempted = false;
 
     try {
       logger.debug(`Processing KiCAD command: ${request.command}`);
 
-      // Format the command and parameters as JSON
-      const requestStr = JSON.stringify(request);
+      // Bridge correlation and semantic operation identity are distinct:
+      // requestId is one frame; operationId survives caller timeout/retry.
+      const requestStr = JSON.stringify({
+        command: request.command,
+        params: request.params,
+        timeout: request.timeout,
+        requestId: request.requestId,
+        ...(request.operationId ? { operationId: request.operationId } : {}),
+      });
 
       // Set a timeout (use command-specific timeout or default)
-      const timeoutDuration = request.timeout || 30000;
+      const timeoutDuration = request.timeout || DEFAULT_COMMAND_TIMEOUT_MS;
       const timeoutHandle = setTimeout(() => {
         // The response may have arrived between the timer firing and this
         // callback running; only abandon our own request (#373).
@@ -954,37 +1414,130 @@ export class KiCADMcpServer {
         logger.error(`Command timeout after ${timeoutDuration / 1000}s: ${request.command}`);
         logger.error(`Buffer contents: ${this.responseBuffer.substring(0, 200)}...`);
 
-        // Clear state. The buffer is left alone: a partial frame from the
-        // timed-out command completes on the next data chunk and is then
-        // discarded by ID, not delivered to the next request.
+        const handler = this.currentRequestHandler;
+        const endedAtMs = this.now();
+        this.timeoutCount += 1;
+        this.emitBridgeMetric(
+          "timeout",
+          request.command,
+          request.requestId,
+          enqueuedAtMs,
+          startedAtMs,
+          endedAtMs,
+        );
+
+        if (request.reconciliationFor) {
+          // Reconciliation is read-only. If it times out, the original receipt
+          // stays uncertain but the bridge itself may continue serving reads.
+          this.operationReceipts.markUncertain(
+            request.reconciliationFor,
+            "degraded_uncertain",
+          );
+          this.currentRequestHandler = null;
+          this.processingRequest = false;
+          reject(
+            new ProviderRuntimeError(
+              "timeout",
+              true,
+              `Reconciliation timeout for operation_id=${request.reconciliationFor}`,
+            ),
+          );
+          setTimeout(() => this.processNextRequest(), 0);
+          return;
+        }
+
+        if (request.operationId && handler) {
+          // A caller timeout is not cancellation. Keep this exact request as
+          // the active bridge frame so its late response can be correlated and
+          // reconciled before another mutation is admitted.
+          const receipt = this.operationReceipts.markUncertain(
+            request.operationId,
+            "degraded_uncertain",
+          );
+          handler.timedOut = true;
+          reject(new OperationUncertainError(receipt));
+          return;
+        }
+
         this.currentRequestHandler = null;
         this.processingRequest = false;
-
-        // Reject the promise
-        reject(new Error(`Command timeout after ${timeoutDuration / 1000}s: ${request.command}`));
-
-        // Process next request
+        reject(
+          new ProviderRuntimeError(
+            "timeout",
+            true,
+            `Command timeout after ${timeoutDuration / 1000}s: ${request.command}`,
+          ),
+        );
         setTimeout(() => this.processNextRequest(), 0);
       }, timeoutDuration);
 
-      // Store the current request handler
-      this.currentRequestHandler = { requestId: request.requestId, resolve, reject, timeoutHandle };
+      this.currentRequestHandler = {
+        requestId: request.requestId,
+        command: request.command,
+        enqueuedAtMs,
+        startedAtMs,
+        resolve,
+        reject,
+        timeoutHandle,
+        params: request.params,
+        operationId: request.operationId,
+        mutating: request.mutating,
+        reconciliationFor: request.reconciliationFor,
+      };
 
-      // Write the request to the Python process
+      // Write the request to the Python process.
       logger.debug(`Sending request: ${requestStr}`);
+      dispatchAttempted = true;
       this.pythonProcess?.stdin?.write(requestStr + "\n");
     } catch (error) {
       logger.error(`Error processing request: ${error}`);
 
-      // Reset processing flag
+      // Reset processing state and cancel any live execution timer.
+      if (this.currentRequestHandler?.requestId === request.requestId) {
+        clearTimeout(this.currentRequestHandler.timeoutHandle);
+      }
       this.processingRequest = false;
       this.currentRequestHandler = null;
+      this.errorCount += 1;
+      this.emitBridgeMetric(
+        "error",
+        request.command,
+        request.requestId,
+        enqueuedAtMs,
+        startedAtMs,
+        this.now(),
+      );
 
       // Process next request
       setTimeout(() => this.processNextRequest(), 0);
 
-      // Reject the promise
-      reject(error);
+      if (request.operationId) {
+        if (dispatchAttempted) {
+          const receipt = this.operationReceipts.markUncertain(
+            request.operationId,
+            "degraded_uncertain",
+          );
+          reject(new OperationUncertainError(receipt));
+        } else {
+          this.operationReceipts.abandonBeforeDispatch(request.operationId);
+          reject(
+            new ProviderRuntimeError(
+              "internal_error",
+              false,
+              `Failed to prepare KiCAD command: ${request.command}`,
+            ),
+          );
+        }
+        return;
+      }
+
+      reject(
+        new ProviderRuntimeError(
+          "internal_error",
+          false,
+          `Failed to dispatch KiCAD command: ${request.command}`,
+        ),
+      );
     }
   }
 }

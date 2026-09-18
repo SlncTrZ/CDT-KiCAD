@@ -121,6 +121,10 @@ PROJECT_TOOLS = [
                     "default": False,
                     "description": "Replace an existing destination when saving to a different path",
                 },
+                "operationId": {
+                    "type": "string",
+                    "description": "Stable semantic operation ID for timeout-safe retry/reconciliation",
+                },
             },
         },
     },
@@ -184,7 +188,11 @@ PROJECT_TOOLS = [
     {
         "name": "snapshot_project",
         "title": "Snapshot Project (Checkpoint)",
-        "description": "Copies the entire project folder to a new timestamped snapshot directory so you can resume from this checkpoint later without redoing earlier steps. Call this after every successfully completed design step (e.g. after Step 1 schematic, after Step 2 PCB layout) before asking for user confirmation to proceed.",
+        "description": (
+            "Creates a recovery checkpoint manifest with source identity/revision "
+            "and SHA-256 hashes for copied project resources. Prompt/session logs "
+            "and nested snapshots are excluded by default."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -200,7 +208,31 @@ PROJECT_TOOLS = [
                     "type": "string",
                     "description": "Project directory path. Auto-detected from loaded board if omitted.",
                 },
+                "checkpointId": {
+                    "type": "string",
+                    "description": "Optional stable checkpoint ID; generated when omitted.",
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Checkpoint scope label (default: project).",
+                },
             },
+        },
+    },
+    {
+        "name": "restore_checkpoint",
+        "title": "Restore Verified Checkpoint",
+        "description": (
+            "Validates checkpoint manifest/resources, restores files, reopens the board, "
+            "and performs semantic read-back before any checkpointed_atomic claim."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "checkpointPath": {"type": "string"},
+                "projectPath": {"type": "string"},
+            },
+            "required": ["checkpointPath"],
         },
     },
     {
@@ -232,6 +264,10 @@ BOARD_TOOLS = [
                     "type": "number",
                     "description": "Board height in millimeters",
                     "minimum": 1,
+                },
+                "operationId": {
+                    "type": "string",
+                    "description": "Stable semantic operation ID for timeout-safe retry/reconciliation",
                 },
             },
             "required": ["width", "height"],
@@ -734,6 +770,10 @@ COMPONENT_TOOLS = [
                 "y": {
                     "type": "number",
                     "description": "New Y coordinate in millimeters",
+                },
+                "operationId": {
+                    "type": "string",
+                    "description": "Stable semantic operation ID for timeout-safe retry/reconciliation",
                 },
             },
             "required": ["reference", "x", "y"],
@@ -2259,6 +2299,10 @@ EXPORT_TOOLS = [
                     "enum": ["color", "black_white"],
                     "description": "Color mode for output",
                     "default": "color",
+                },
+                "operationId": {
+                    "type": "string",
+                    "description": "Stable semantic operation ID for timeout-safe retry/reconciliation",
                 },
             },
             "required": ["outputPath"],

@@ -112,15 +112,12 @@ describe("Digi-Key tool schemas", () => {
     );
   });
 
-  it("does not promise that a credential argument is rejected", () => {
-    // zod strips unknown keys, so a credential passed anyway is ignored, not
-    // refused. The Python side returns a warning naming it; calling that
-    // "rejected" would tell a caller their key never left their machine.
-    // ("rejected credentials" in the connection-test description is a different
-    // thing entirely -- that is Digi-Key rejecting them.)
-    const claimsRejection = /reject\w*\s+(as\s+)?(an?\s+)?(tool\s+)?(argument|parameter)/i;
+  it("keeps credential-shaped fields out of every declared Digi-Key schema", () => {
+    // The provider-wide contract boundary is responsible for rejecting unknown
+    // top-level arguments. This module's responsibility is narrower: never
+    // declare a credential-bearing field that could become a legitimate input.
     for (const tool of registeredTools()) {
-      expect(tool.description, tool.name).not.toMatch(claimsRejection);
+      expect(schemaKeys(tool.schema).filter((key) => CREDENTIAL_NAME.test(key))).toEqual([]);
     }
   });
 });

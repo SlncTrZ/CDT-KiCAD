@@ -43,6 +43,7 @@ export const toolCategories: ToolCategory[] = [
       "get_board_origin",
       "launch_kicad_ui",
       "import_pcb",
+      "import_svg_logo",
     ],
   },
   {
@@ -64,6 +65,15 @@ export const toolCategories: ToolCategory[] = [
       "group_components",
       "replace_component",
       "hierarchical_place",
+      "set_footprint_type",
+      "get_component_pads",
+      "get_component_list",
+      "get_pad_position",
+      "place_component_array",
+      "align_components",
+      "check_courtyard_overlaps",
+      "suggest_placement",
+      "duplicate_component",
     ],
   },
   {
@@ -106,6 +116,7 @@ export const toolCategories: ToolCategory[] = [
       "set_design_rules",
       "get_design_rules",
       "run_drc",
+      "run_erc",
       "assign_net_to_class",
       "set_layer_constraints",
       "check_clearance",
@@ -143,6 +154,21 @@ export const toolCategories: ToolCategory[] = [
       "export_schematic_pdf",
       "add_schematic_text",
       "list_schematic_texts",
+      "delete_schematic_component",
+      "edit_schematic_component",
+      "set_schematic_component_property",
+      "remove_schematic_component_property",
+      "get_schematic_component",
+      "get_schematic_pin_locations",
+      "move_schematic_net_label",
+      "get_schematic_view_region",
+      "find_overlapping_elements",
+      "get_elements_in_region",
+      "find_wires_crossing_symbols",
+      "list_floating_labels",
+      "find_orphaned_wires",
+      "snap_to_grid",
+      "get_net_at_point",
     ],
   },
   {
@@ -200,6 +226,8 @@ export const toolCategories: ToolCategory[] = [
       "create_hierarchical_subsheet",
       "set_sheet_property",
       "get_sheet_properties",
+      "add_schematic_hierarchical_label",
+      "add_sheet_pin",
     ],
   },
   {
@@ -212,6 +240,7 @@ export const toolCategories: ToolCategory[] = [
       "autoplace_schematic_fields",
       "lint_schematic_cosmetic",
       "lint_offgrid",
+      "suggest_schematic_declutter",
     ],
   },
   {
@@ -229,8 +258,25 @@ export const toolCategories: ToolCategory[] = [
   },
   {
     name: "routing",
-    description: "Advanced routing operations: vias, copper pours, net display colors",
-    tools: ["add_via", "add_copper_pour", "set_net_color"],
+    description:
+      "PCB routing operations: traces, vias, zones, netclasses, differential pairs and routing queries",
+    tools: [
+      "add_via",
+      "add_copper_pour",
+      "set_net_color",
+      "route_arc_trace",
+      "delete_trace",
+      "query_traces",
+      "query_zones",
+      "add_gnd_stitching_vias",
+      "get_nets_list",
+      "modify_trace",
+      "create_netclass",
+      "route_differential_pair",
+      "refill_zones",
+      "route_pad_to_pad",
+      "copy_routing_pattern",
+    ],
   },
   {
     name: "autoroute",
@@ -242,6 +288,41 @@ export const toolCategories: ToolCategory[] = [
     description:
       "File integrity checks: locate structural damage in schematics and symbol libraries before KiCad refuses to open them",
     tools: ["validate_schematic", "validate_symbol_library"],
+  },
+  {
+    name: "footprint",
+    description:
+      "Footprint authoring and libraries: create/edit footprints, manage 3D models and footprint libraries",
+    tools: [
+      "create_footprint",
+      "add_footprint_3d_model",
+      "import_3d_model",
+      "add_component_3d_model",
+      "edit_footprint_pad",
+      "register_footprint_library",
+      "list_footprint_libraries",
+    ],
+  },
+  {
+    name: "datasheet",
+    description: "Datasheet enrichment and component datasheet lookup",
+    tools: ["enrich_datasheets", "get_datasheet_url"],
+  },
+  {
+    name: "jlcpcb",
+    description: "JLCPCB catalogue download, search, part detail, statistics and alternatives",
+    tools: [
+      "download_jlcpcb_database",
+      "search_jlcpcb_parts",
+      "get_jlcpcb_part",
+      "get_jlcpcb_database_stats",
+      "suggest_jlcpcb_alternatives",
+    ],
+  },
+  {
+    name: "eagle_import",
+    description: "Eagle project conversion into KiCAD project files",
+    tools: ["import_eagle_project"],
   },
   {
     name: "parts-registry",
@@ -279,9 +360,11 @@ export const directToolNames = [
   "close_project",
   "save_project",
   "save_board",
+  "save_as",
   "is_dirty",
   "discard_or_reload",
   "snapshot_project",
+  "restore_checkpoint",
   "get_project_info",
 
   // Core PCB operations
@@ -313,6 +396,8 @@ export const directToolNames = [
 
   // UI management
   "get_backend_state",
+  "reconnect_backend",
+  "rebind_backend_session",
   "check_kicad_ui",
 ];
 
