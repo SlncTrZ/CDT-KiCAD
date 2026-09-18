@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -9,6 +10,16 @@ const pythonBridge = fileURLToPath(new URL("../python/kicad_interface.py", impor
 
 function registeredTools(server: McpServer): Record<string, any> {
   return (server as any)._registeredTools;
+}
+
+function expectedRegisteredToolCount(): number {
+  const inventory = readFileSync(
+    fileURLToPath(new URL("../docs/TOOL_INVENTORY.md", import.meta.url)),
+    "utf8",
+  );
+  const match = inventory.match(/\*\*Tools registered on the server:\*\*\s+(\d+)/);
+  if (!match) throw new Error("Generated tool inventory is missing the registered-tool count");
+  return Number(match[1]);
 }
 
 function collectNonStrictObjects(
@@ -58,7 +69,7 @@ describe("provider tool contract boundary", () => {
     host.registerAllOn(target);
 
     const tools = registeredTools(target);
-    expect(Object.keys(tools)).toHaveLength(236);
+    expect(Object.keys(tools)).toHaveLength(expectedRegisteredToolCount());
 
     const nonStrict: string[] = [];
     for (const [name, tool] of Object.entries(tools)) {
