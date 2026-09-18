@@ -144,8 +144,20 @@ function Start-ProviderTask {
   Write-Output "Started '$TaskName'; liveness health is OK."
 }
 
+function Stop-ProviderProcessTree {
+  $entryPoint = Join-Path $repoRoot "dist\index.js"
+  $entryPointPattern = [Regex]::Escape($entryPoint)
+  $providerProcesses = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+    Where-Object { $_.CommandLine -and $_.CommandLine -match $entryPointPattern }
+
+  foreach ($process in $providerProcesses) {
+    & taskkill.exe /PID $process.ProcessId /T /F 2>$null | Out-Null
+  }
+}
+
 function Stop-ProviderTask {
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  Stop-ProviderProcessTree
   Wait-ProviderHealth -ExpectedHealthy $false
   Write-Output "Stopped '$TaskName'; liveness endpoint is down."
 }
