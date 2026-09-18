@@ -894,7 +894,12 @@ class KiCADInterface(SchematicHandlersMixin):
 
     def _ipc_session_alive(self) -> bool:
         backend = getattr(self, "ipc_backend", None)
-        return bool(backend and backend.is_connected())
+        if not backend:
+            return False
+        try:
+            return bool(backend.is_connected())
+        except Exception:
+            return False
 
     def _mark_session_degraded(self, reason: str) -> None:
         """Preserve IPC ownership while marking live state as uncertain.
@@ -918,8 +923,16 @@ class KiCADInterface(SchematicHandlersMixin):
         """Refresh only health state; never changes backend ownership."""
         backend = getattr(self, "session_backend", None)
         state = getattr(self, "session_state", "none")
-        if backend == "ipc" and state == "ipc" and not self._ipc_session_alive():
-            self._mark_session_degraded("ipc_connection_lost")
+        if backend == "ipc" and state == "ipc":
+            if not self._ipc_session_alive():
+                self._mark_session_degraded("ipc_connection_lost")
+            elif self.session_board_path and not self._ipc_board_path_matches(
+                self.session_board_path
+            ):
+                # A live transport is not proof that KiCad still has our board.
+                # The human may have switched documents while the socket stayed
+                # healthy; fail closed before routing a command to that board.
+                self._mark_session_degraded("ipc_document_identity_mismatch")
         elif backend is None:
             self.session_state = "none"
             self.session_state_reason = None
@@ -938,6 +951,8 @@ class KiCADInterface(SchematicHandlersMixin):
         )
         return {
             "success": False,
+            "kind": "provider_unavailable",
+            "retryable": True,
             "message": message,
             "error": {
                 "kind": "provider_unavailable",
@@ -959,6 +974,8 @@ class KiCADInterface(SchematicHandlersMixin):
             message = "No IPC-owned board session exists to reconnect"
             return {
                 "success": False,
+                "kind": "conflict",
+                "retryable": False,
                 "message": message,
                 "error": {"kind": "conflict", "retryable": False, "message": message},
                 "sessionState": getattr(self, "session_state", "none"),
@@ -987,6 +1004,8 @@ class KiCADInterface(SchematicHandlersMixin):
             )
             return {
                 "success": False,
+                "kind": "conflict",
+                "retryable": False,
                 "message": message,
                 "error": {"kind": "conflict", "retryable": False, "message": message},
                 "sessionBackend": "ipc",
@@ -1019,6 +1038,8 @@ class KiCADInterface(SchematicHandlersMixin):
             message = "targetBackend must be 'ipc' or 'swig'"
             return {
                 "success": False,
+                "kind": "validation_error",
+                "retryable": False,
                 "message": message,
                 "error": {"kind": "validation_error", "retryable": False, "message": message},
             }
@@ -1028,6 +1049,8 @@ class KiCADInterface(SchematicHandlersMixin):
             message = "No board session exists to rebind"
             return {
                 "success": False,
+                "kind": "conflict",
+                "retryable": False,
                 "message": message,
                 "error": {"kind": "conflict", "retryable": False, "message": message},
             }
@@ -1039,6 +1062,8 @@ class KiCADInterface(SchematicHandlersMixin):
                 message = "IPC backend is not available for explicit rebind"
                 return {
                     "success": False,
+                    "kind": "provider_unavailable",
+                    "retryable": True,
                     "message": message,
                     "error": {
                         "kind": "provider_unavailable",
@@ -1055,6 +1080,8 @@ class KiCADInterface(SchematicHandlersMixin):
                 message = f"Cannot verify live KiCad document identity: {exc}"
                 return {
                     "success": False,
+                    "kind": "provider_unavailable",
+                    "retryable": True,
                     "message": message,
                     "error": {
                         "kind": "provider_unavailable",
@@ -1068,6 +1095,8 @@ class KiCADInterface(SchematicHandlersMixin):
                 message = "Live KiCad document does not match the SWIG-owned session board"
                 return {
                     "success": False,
+                    "kind": "conflict",
+                    "retryable": False,
                     "message": message,
                     "error": {"kind": "conflict", "retryable": False, "message": message},
                     "expectedBoardPath": current_path,
@@ -1077,6 +1106,8 @@ class KiCADInterface(SchematicHandlersMixin):
                 message = "IPC connected but the live board API is unavailable"
                 return {
                     "success": False,
+                    "kind": "provider_unavailable",
+                    "retryable": True,
                     "message": message,
                     "error": {
                         "kind": "provider_unavailable",
@@ -1105,6 +1136,8 @@ class KiCADInterface(SchematicHandlersMixin):
             message = "SWIG rebind board identity does not match the current session"
             return {
                 "success": False,
+                "kind": "conflict",
+                "retryable": False,
                 "message": message,
                 "error": {"kind": "conflict", "retryable": False, "message": message},
                 "expectedBoardPath": getattr(self, "session_board_path", None),
@@ -1120,6 +1153,8 @@ class KiCADInterface(SchematicHandlersMixin):
             )
             return {
                 "success": False,
+                "kind": "conflict",
+                "retryable": False,
                 "message": message,
                 "error": {"kind": "conflict", "retryable": False, "message": message},
                 "sessionBackend": "ipc",
@@ -1130,6 +1165,8 @@ class KiCADInterface(SchematicHandlersMixin):
             message = f"Board file is unavailable for SWIG rebind: {board_path}"
             return {
                 "success": False,
+                "kind": "not_found",
+                "retryable": False,
                 "message": message,
                 "error": {"kind": "not_found", "retryable": False, "message": message},
             }
@@ -1139,6 +1176,8 @@ class KiCADInterface(SchematicHandlersMixin):
             message = f"Could not load board for SWIG rebind: {board_path}"
             return {
                 "success": False,
+                "kind": "provider_unavailable",
+                "retryable": True,
                 "message": message,
                 "error": {"kind": "provider_unavailable", "retryable": True, "message": message},
             }
@@ -2351,6 +2390,7 @@ class KiCADInterface(SchematicHandlersMixin):
         """
         save = params.get("save", True)
         board_path = self._authoritative_board_path()
+        degraded_before_close = getattr(self, "session_state", "none") == "degraded_uncertain"
         loaded = board_path is not None or self.board is not None
 
         if not loaded:
@@ -2407,7 +2447,12 @@ class KiCADInterface(SchematicHandlersMixin):
             )
         elif not save:
             dirty = self._dirty_state(board_path)
-            if dirty.get("dirty"):
+            if degraded_before_close:
+                warnings.append(
+                    "Project closed without saving while live IPC state was degraded/uncertain; "
+                    "unsaved GUI changes may have been discarded."
+                )
+            elif dirty.get("dirty"):
                 warnings.append(
                     "Project closed without saving (save=False); in-memory changes "
                     "since the last save were discarded."
@@ -2431,6 +2476,9 @@ class KiCADInterface(SchematicHandlersMixin):
         if save_backend:
             result["_backend"] = save_backend
             result["_realtime"] = save_backend == "ipc"
+        elif degraded_before_close:
+            result["_backend"] = "degraded_uncertain"
+            result["_realtime"] = False
         return result
 
     def _handle_place_component(self, params: Dict[str, Any]) -> Dict[str, Any]:

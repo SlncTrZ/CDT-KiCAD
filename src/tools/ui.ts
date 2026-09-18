@@ -5,6 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { logger } from "../logger.js";
+import { formatKicadResult } from "./tool-response.js";
 
 export function registerUITools(server: McpServer, callKicadScript: Function) {
   // Get MCP/KiCAD backend and loaded file state
@@ -33,14 +34,7 @@ export function registerUITools(server: McpServer, callKicadScript: Function) {
     async () => {
       logger.info("Reconnecting KiCAD backend session");
       const result = await callKicadScript("reconnect_backend", {});
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return formatKicadResult(result);
     },
   );
 
@@ -65,14 +59,7 @@ export function registerUITools(server: McpServer, callKicadScript: Function) {
     }) => {
       logger.info("Explicitly rebinding KiCAD backend session");
       const result = await callKicadScript("rebind_backend_session", args);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return formatKicadResult(result);
     },
   );
 

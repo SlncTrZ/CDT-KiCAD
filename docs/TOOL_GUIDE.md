@@ -71,9 +71,13 @@ accompanied by `backend`, `reason`, and `context` fields.
 Backend/session state is one of `none | swig | ipc | degraded_uncertain`.
 An IPC-owned session that loses IPC stays IPC-owned and becomes
 `degraded_uncertain`; it never silently reloads the saved board and continues
-mutating through SWIG. Mutations then fail closed with typed
-`provider_unavailable`. Only explicitly classified saved-file reads may use a
-SWIG/disk fallback, and their response labels the source/backend/reason.
+mutating through SWIG. The live board identity is also re-checked while an
+IPC-owned session is active, so switching the KiCad GUI to another board makes
+the session degraded before any mutation is routed. Mutations then fail closed
+with typed `provider_unavailable`. Only explicitly classified saved-file reads
+may use a SWIG/disk fallback, and their response labels the
+source/backend/reason. Closing a degraded session with `save=false` is an
+explicit discard and warns that unsaved GUI state may have been lost.
 
 Use `reconnect_backend` to restore an IPC-owned session only after the live
 KiCad document identity matches the pinned board. Use

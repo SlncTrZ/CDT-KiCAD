@@ -303,12 +303,44 @@ class TestSessionTransitions:
         result = iface.handle_command("save_project", {})
 
         assert result["success"] is False
+        assert result["kind"] == "provider_unavailable"
+        assert result["retryable"] is True
         assert result["error"]["kind"] == "provider_unavailable"
         assert result["sessionState"] == "degraded_uncertain"
         assert iface.session_backend == "ipc"  # ownership is preserved
         assert iface.session_state == "degraded_uncertain"
         assert holder.get("swig_saves") is None
         assert board_path.read_bytes() == before
+
+    def test_live_ipc_document_switch_degrades_before_mutation(self, tmp_path, monkeypatch):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        other_path = tmp_path / "other" / "other.kicad_pcb"
+        iface, backend, holder, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        ipc_mutation = MagicMock(return_value={"success": True})
+        swig_mutation = MagicMock(return_value={"success": True})
+        iface._ipc_move_component = ipc_mutation
+        iface.command_routes["move_component"] = swig_mutation
+
+        # The transport is healthy, but the human changed the live GUI to a
+        # different board. Identity drift must fail closed before either
+        # backend receives the mutation.
+        backend.connected = True
+        backend.open_board_path = str(other_path)
+
+        result = iface.handle_command("move_component", {"reference": "R1", "x": 10, "y": 20})
+
+        assert result["success"] is False
+        assert result["kind"] == "provider_unavailable"
+        assert result["retryable"] is True
+        assert result["reason"] == "ipc_document_identity_mismatch"
+        assert result["sessionState"] == "degraded_uncertain"
+        assert iface.session_backend == "ipc"
+        assert iface.ipc_board_api is None
+        ipc_mutation.assert_not_called()
+        swig_mutation.assert_not_called()
+        assert holder.get("swig_saves") is None
 
     def test_degraded_whitelisted_read_uses_fresh_disk_and_labels_source(
         self, tmp_path, monkeypatch
@@ -349,6 +381,8 @@ class TestSessionTransitions:
         result = iface.handle_command("get_component_list", {})
 
         assert result["success"] is False
+        assert result["kind"] == "provider_unavailable"
+        assert result["retryable"] is True
         assert result["error"]["kind"] == "provider_unavailable"
         assert result["sessionState"] == "degraded_uncertain"
         handler.assert_not_called()
@@ -368,6 +402,29 @@ class TestSessionTransitions:
         assert result["error"]["kind"] == "provider_unavailable"
         assert result["sessionState"] == "degraded_uncertain"
         handler.assert_not_called()
+
+    def test_degraded_close_without_save_warns_live_state_may_be_discarded(
+        self, tmp_path, monkeypatch
+    ):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        iface.command_routes["close_project"] = iface._handle_close_project
+        iface._clear_project_state = MagicMock()
+        backend.connected = False
+
+        result = iface.handle_command("close_project", {"save": False})
+
+        assert result["success"] is True
+        assert result["closed"] is True
+        assert result["_backend"] == "degraded_uncertain"
+        assert result["_realtime"] is False
+        assert any(
+            "live IPC state was degraded/uncertain" in warning
+            for warning in result.get("warnings", [])
+        )
+        iface._clear_project_state.assert_called_once()
 
     def test_failed_reopen_clears_stale_pin(self, tmp_path, monkeypatch):
         """An unrecoverable open after a pinned session must drop the old pin.
@@ -821,6 +878,8 @@ class TestBackendStateReporting:
         result = iface._handle_reconnect_backend({})
 
         assert result["success"] is False
+        assert result["kind"] == "conflict"
+        assert result["retryable"] is False
         assert result["error"]["kind"] == "conflict"
         assert iface.session_backend == "ipc"
         assert iface.session_state == "degraded_uncertain"
@@ -839,6 +898,8 @@ class TestBackendStateReporting:
 
         refused = iface._handle_rebind_backend_session({"targetBackend": "swig"})
         assert refused["success"] is False
+        assert refused["kind"] == "conflict"
+        assert refused["retryable"] is False
         assert refused["error"]["kind"] == "conflict"
         iface._safe_load_board.assert_not_called()
 
