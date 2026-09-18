@@ -15,6 +15,7 @@
     "test:ts": "vitest run",
     "test:ts:watch": "vitest",
     "test:py": "pytest tests/ -v",
+    "test:queue-load": "npm run build && node scripts/queue-load-fixture.mjs",
     "test:coverage": "pytest tests/ --cov=python --cov-report=html --cov-report=term",
     "lint": "npm run lint:ts && npm run lint:py",
     "lint:ts": "eslint src/",

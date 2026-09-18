@@ -39,6 +39,8 @@ KiCAD MCP Server -- AI-assisted PCB design via Model Context Protocol
 | [JLCPCB Usage Guide](JLCPCB_USAGE_GUIDE.md)   | Detailed JLCPCB setup and usage                    |
 | [Library Integration](LIBRARY_INTEGRATION.md) | Footprint and symbol library setup                 |
 | [IPC Backend Status](IPC_BACKEND_STATUS.md)   | Real-time KiCAD UI synchronization (experimental)  |
+| [SlncTrZ Integration](SLNCTRZ_INTEGRATION.md)   | Provider wiring, queue bounds, and Windows lifecycle |
+| [Windows Native Acceptance](WINDOWS_NATIVE_ACCEPTANCE.md) | Native KiCad service/restart/reconnect acceptance |
 
 ---
 

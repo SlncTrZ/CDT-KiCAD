@@ -12,6 +12,90 @@ import { logger } from "./logger.js";
 import { computeCommandTimeout, DEFAULT_COMMAND_TIMEOUT_MS } from "./command-timeout.js";
 import { PROVIDER_ID, PROVIDER_VERSION } from "./provider-contract.js";
 
+export const DEFAULT_MAX_QUEUE_DEPTH = 32;
+export const DEFAULT_ENQUEUE_DEADLINE_MS = 120_000;
+
+export type BridgeRuntimeEvent = "completed" | "timeout" | "error" | "rejected";
+
+export interface BridgeRuntimeMetric {
+  event: BridgeRuntimeEvent;
+  command: string;
+  request_id: number;
+  queue_depth: number;
+  queue_wait_ms: number;
+  execution_ms: number;
+  total_latency_ms: number;
+  timeout_count: number;
+  error_count: number;
+  rejection_count: number;
+}
+
+export interface BridgeRuntimeMetricsSnapshot {
+  queue_depth: number;
+  in_flight: number;
+  max_queue_depth: number;
+  enqueue_deadline_ms: number;
+  timeout_count: number;
+  error_count: number;
+  rejection_count: number;
+}
+
+export interface BridgeRuntimeOptions {
+  maxQueueDepth?: number;
+  enqueueDeadlineMs?: number;
+  now?: () => number;
+  metricsSink?: (metric: BridgeRuntimeMetric) => void;
+}
+
+type ProviderRuntimeErrorKind =
+  | "rate_limited"
+  | "timeout"
+  | "provider_unavailable"
+  | "internal_error";
+
+/**
+ * Bridge-local error carrying the canonical provider error fields.
+ * MCP callers still receive the SDK's tool error envelope, while direct
+ * bridge consumers/tests can inspect kind + retryable deterministically.
+ */
+export class ProviderRuntimeError extends Error {
+  public readonly providerMessage: string;
+
+  constructor(
+    public readonly kind: ProviderRuntimeErrorKind,
+    public readonly retryable: boolean,
+    message: string,
+    public readonly details?: Readonly<Record<string, unknown>>,
+  ) {
+    // The MCP SDK converts thrown tool errors into isError results using only
+    // Error.message. Encode the canonical provider payload there so kind and
+    // retryability survive the SDK boundary as parseable JSON text.
+    const payload = {
+      kind,
+      retryable,
+      message,
+      ...(details ? { details } : {}),
+    };
+    super(JSON.stringify(payload));
+    this.name = "ProviderRuntimeError";
+    this.providerMessage = message;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      kind: this.kind,
+      retryable: this.retryable,
+      message: this.providerMessage,
+      ...(this.details ? { details: this.details } : {}),
+    };
+  }
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
+}
+
 // Import tool registration functions
 import { registerHelpTools } from "./tools/help.js";
 import { registerProjectTools } from "./tools/project.js";
@@ -238,6 +322,8 @@ export class KiCADMcpServer {
       timeout: number;
       requestId: number;
     };
+    enqueuedAtMs?: number;
+    enqueueTimeoutHandle?: NodeJS.Timeout;
     resolve: Function;
     reject: Function;
   }> = [];
@@ -247,10 +333,20 @@ export class KiCADMcpServer {
   private nextInternalRequestId = 1;
   private currentRequestHandler: {
     requestId: number;
+    command?: string;
+    enqueuedAtMs?: number;
+    startedAtMs?: number;
     resolve: Function;
     reject: Function;
     timeoutHandle: NodeJS.Timeout;
   } | null = null;
+  private readonly maxQueueDepth: number;
+  private readonly enqueueDeadlineMs: number;
+  private readonly now: () => number;
+  private readonly metricsSink: (metric: BridgeRuntimeMetric) => void;
+  private timeoutCount = 0;
+  private errorCount = 0;
+  private rejectionCount = 0;
 
   /** Resolved when Python prints {"type":"ready"} — stdin loop is live. */
   private readyPromise: Promise<void>;
@@ -268,9 +364,28 @@ export class KiCADMcpServer {
    * @param kicadScriptPath Path to the Python KiCAD interface script
    * @param logLevel Log level for the server
    */
-  constructor(kicadScriptPath: string, logLevel: "error" | "warn" | "info" | "debug" = "info") {
+  constructor(
+    kicadScriptPath: string,
+    logLevel: "error" | "warn" | "info" | "debug" = "info",
+    runtimeOptions: BridgeRuntimeOptions = {},
+  ) {
     // Set up the logger
     logger.setLogLevel(logLevel);
+
+    this.maxQueueDepth = positiveInteger(
+      runtimeOptions.maxQueueDepth ?? process.env.KICAD_MCP_MAX_QUEUE_DEPTH,
+      DEFAULT_MAX_QUEUE_DEPTH,
+    );
+    this.enqueueDeadlineMs = positiveInteger(
+      runtimeOptions.enqueueDeadlineMs ?? process.env.KICAD_MCP_ENQUEUE_DEADLINE_MS,
+      DEFAULT_ENQUEUE_DEADLINE_MS,
+    );
+    this.now = runtimeOptions.now ?? Date.now;
+    this.metricsSink =
+      runtimeOptions.metricsSink ??
+      ((metric) => {
+        logger.info(`bridge_metric ${JSON.stringify(metric)}`);
+      });
 
     // Check if KiCAD script exists
     this.kicadScriptPath = kicadScriptPath;
@@ -789,8 +904,90 @@ export class KiCADMcpServer {
     });
   }
 
+  /** Current bounded-queue counters for diagnostics and deterministic fixtures. */
+  public getBridgeRuntimeMetrics(): BridgeRuntimeMetricsSnapshot {
+    return {
+      queue_depth: this.requestQueue.length,
+      in_flight: this.processingRequest ? 1 : 0,
+      max_queue_depth: this.maxQueueDepth,
+      enqueue_deadline_ms: this.enqueueDeadlineMs,
+      timeout_count: this.timeoutCount,
+      error_count: this.errorCount,
+      rejection_count: this.rejectionCount,
+    };
+  }
+
+  private emitBridgeMetric(
+    event: BridgeRuntimeEvent,
+    command: string,
+    requestId: number,
+    enqueuedAtMs: number,
+    startedAtMs?: number,
+    endedAtMs = this.now(),
+  ): void {
+    const queueWaitEnd = startedAtMs ?? endedAtMs;
+    const metric: BridgeRuntimeMetric = {
+      event,
+      command,
+      request_id: requestId,
+      queue_depth: this.requestQueue.length,
+      queue_wait_ms: Math.max(0, queueWaitEnd - enqueuedAtMs),
+      execution_ms: startedAtMs === undefined ? 0 : Math.max(0, endedAtMs - startedAtMs),
+      total_latency_ms: Math.max(0, endedAtMs - enqueuedAtMs),
+      timeout_count: this.timeoutCount,
+      error_count: this.errorCount,
+      rejection_count: this.rejectionCount,
+    };
+
+    try {
+      this.metricsSink(metric);
+    } catch (error) {
+      logger.warn(
+        `Bridge metrics sink failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private expireQueuedRequest(requestId: number): void {
+    const index = this.requestQueue.findIndex((entry) => entry.request.requestId === requestId);
+    if (index < 0) return;
+
+    const [entry] = this.requestQueue.splice(index, 1);
+    if (entry.enqueueTimeoutHandle) clearTimeout(entry.enqueueTimeoutHandle);
+
+    const endedAtMs = this.now();
+    const enqueuedAtMs = entry.enqueuedAtMs ?? endedAtMs;
+    this.timeoutCount += 1;
+
+    const error = new ProviderRuntimeError(
+      "timeout",
+      true,
+      `KiCAD bridge queue wait exceeded ${this.enqueueDeadlineMs}ms for ${entry.request.command}`,
+      {
+        queue_depth: this.requestQueue.length,
+        enqueue_deadline_ms: this.enqueueDeadlineMs,
+      },
+    );
+    entry.reject(error);
+    this.emitBridgeMetric(
+      "timeout",
+      entry.request.command,
+      entry.request.requestId,
+      enqueuedAtMs,
+      undefined,
+      endedAtMs,
+    );
+
+    if (!this.processingRequest) {
+      setTimeout(() => this.processNextRequest(), 0);
+    }
+  }
+
   /**
-   * Call the KiCAD scripting interface to execute commands
+   * Call the KiCAD scripting interface to execute commands.
+   *
+   * The existing serializer remains one-at-a-time, but waiting work is bounded
+   * by both queue depth and a wall-clock enqueue deadline.
    *
    * @param command The command to execute
    * @param params The parameters for the command
@@ -798,10 +995,43 @@ export class KiCADMcpServer {
    */
   private async callKicadScript(command: string, params: any): Promise<any> {
     return new Promise((resolve, reject) => {
+      const requestId = this.allocateInternalRequestId();
+      const enqueuedAtMs = this.now();
+
       // Check if Python process is running
       if (!this.pythonProcess) {
         logger.error("Python process is not running");
-        reject(new Error("Python process for KiCAD scripting is not running"));
+        this.errorCount += 1;
+        const error = new ProviderRuntimeError(
+          "provider_unavailable",
+          true,
+          "Python process for KiCAD scripting is not running",
+        );
+        this.emitBridgeMetric("error", command, requestId, enqueuedAtMs, undefined, enqueuedAtMs);
+        reject(error);
+        return;
+      }
+
+      if (this.requestQueue.length >= this.maxQueueDepth) {
+        this.rejectionCount += 1;
+        const error = new ProviderRuntimeError(
+          "rate_limited",
+          true,
+          `KiCAD bridge queue is full (${this.maxQueueDepth} waiting requests)`,
+          {
+            queue_depth: this.requestQueue.length,
+            max_queue_depth: this.maxQueueDepth,
+          },
+        );
+        this.emitBridgeMetric(
+          "rejected",
+          command,
+          requestId,
+          enqueuedAtMs,
+          undefined,
+          enqueuedAtMs,
+        );
+        reject(error);
         return;
       }
 
@@ -811,19 +1041,26 @@ export class KiCADMcpServer {
         logger.info(`Using extended timeout (${commandTimeout / 1000}s) for command: ${command}`);
       }
 
-      // Add request to queue with timeout info
+      const enqueueTimeoutHandle = setTimeout(
+        () => this.expireQueuedRequest(requestId),
+        this.enqueueDeadlineMs,
+      );
+
+      // Add request to queue with timeout info.
       this.requestQueue.push({
         request: {
           command,
           params,
           timeout: commandTimeout,
-          requestId: this.allocateInternalRequestId(),
+          requestId,
         },
+        enqueuedAtMs,
+        enqueueTimeoutHandle,
         resolve,
         reject,
       });
 
-      // Process the queue if not already processing
+      // Process the queue if not already processing.
       if (!this.processingRequest) {
         this.processNextRequest();
       }
@@ -906,6 +1143,21 @@ export class KiCADMcpServer {
       clearTimeout(handler.timeoutHandle);
       this.currentRequestHandler = null;
       this.processingRequest = false;
+
+      if (handler.command && handler.enqueuedAtMs !== undefined) {
+        const endedAtMs = this.now();
+        const failed = result?.success === false;
+        if (failed) this.errorCount += 1;
+        this.emitBridgeMetric(
+          failed ? "error" : "completed",
+          handler.command,
+          handler.requestId,
+          handler.enqueuedAtMs,
+          handler.startedAtMs,
+          endedAtMs,
+        );
+      }
+
       handler.resolve(result);
       setTimeout(() => this.processNextRequest(), 0);
       return;
@@ -936,8 +1188,12 @@ export class KiCADMcpServer {
     // Set processing flag
     this.processingRequest = true;
 
-    // Get the next request
-    const { request, resolve, reject } = this.requestQueue.shift()!;
+    // Get the next request and stop its queue-wait deadline.
+    const entry = this.requestQueue.shift()!;
+    const { request, resolve, reject } = entry;
+    if (entry.enqueueTimeoutHandle) clearTimeout(entry.enqueueTimeoutHandle);
+    const startedAtMs = this.now();
+    const enqueuedAtMs = entry.enqueuedAtMs ?? startedAtMs;
 
     try {
       logger.debug(`Processing KiCAD command: ${request.command}`);
@@ -946,7 +1202,7 @@ export class KiCADMcpServer {
       const requestStr = JSON.stringify(request);
 
       // Set a timeout (use command-specific timeout or default)
-      const timeoutDuration = request.timeout || 30000;
+      const timeoutDuration = request.timeout || DEFAULT_COMMAND_TIMEOUT_MS;
       const timeoutHandle = setTimeout(() => {
         // The response may have arrived between the timer firing and this
         // callback running; only abandon our own request (#373).
@@ -960,15 +1216,40 @@ export class KiCADMcpServer {
         this.currentRequestHandler = null;
         this.processingRequest = false;
 
-        // Reject the promise
-        reject(new Error(`Command timeout after ${timeoutDuration / 1000}s: ${request.command}`));
+        const endedAtMs = this.now();
+        this.timeoutCount += 1;
+        this.emitBridgeMetric(
+          "timeout",
+          request.command,
+          request.requestId,
+          enqueuedAtMs,
+          startedAtMs,
+          endedAtMs,
+        );
+
+        // Reject with the canonical provider timeout fields.
+        reject(
+          new ProviderRuntimeError(
+            "timeout",
+            true,
+            `Command timeout after ${timeoutDuration / 1000}s: ${request.command}`,
+          ),
+        );
 
         // Process next request
         setTimeout(() => this.processNextRequest(), 0);
       }, timeoutDuration);
 
-      // Store the current request handler
-      this.currentRequestHandler = { requestId: request.requestId, resolve, reject, timeoutHandle };
+      // Store the current request handler.
+      this.currentRequestHandler = {
+        requestId: request.requestId,
+        command: request.command,
+        enqueuedAtMs,
+        startedAtMs,
+        resolve,
+        reject,
+        timeoutHandle,
+      };
 
       // Write the request to the Python process
       logger.debug(`Sending request: ${requestStr}`);
@@ -979,12 +1260,27 @@ export class KiCADMcpServer {
       // Reset processing flag
       this.processingRequest = false;
       this.currentRequestHandler = null;
+      this.errorCount += 1;
+      this.emitBridgeMetric(
+        "error",
+        request.command,
+        request.requestId,
+        enqueuedAtMs,
+        startedAtMs,
+        this.now(),
+      );
 
       // Process next request
       setTimeout(() => this.processNextRequest(), 0);
 
-      // Reject the promise
-      reject(error);
+      // Reject with a safe canonical internal error rather than leaking details.
+      reject(
+        new ProviderRuntimeError(
+          "internal_error",
+          true,
+          `Failed to dispatch KiCAD command: ${request.command}`,
+        ),
+      );
     }
   }
 }

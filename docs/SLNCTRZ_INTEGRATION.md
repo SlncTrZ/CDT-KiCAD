@@ -48,6 +48,21 @@ contract version (`cdt-kicad-contract-v1` → next).
 - `timeout`: bounded autoroute/export budgets; a timeout is NOT proof of
   cancellation — the gateway should re-query state before retrying.
 
+## Serialized bridge queue bounds
+
+The existing Node→Python serializer remains one-at-a-time; A5 adds bounded
+waiting instead of a second scheduler/broker.
+
+- `KICAD_MCP_MAX_QUEUE_DEPTH` — maximum waiting requests (default `32`);
+  overload is refused as retryable `rate_limited`.
+- `KICAD_MCP_ENQUEUE_DEADLINE_MS` — maximum queue wait before dispatch
+  (default `120000` ms); expiry is retryable `timeout`.
+- Terminal bridge events are emitted as structured `bridge_metric` JSON with
+  `queue_depth`, `queue_wait_ms`, `execution_ms`, `total_latency_ms`,
+  and cumulative timeout/error/rejection counts.
+- `npm run test:queue-load` is the deterministic 1/2/4/8/16 caller load
+  fixture. It is serializer/load evidence, not Windows/KiCad native evidence.
+
 ## Windows-native deployment (no Docker)
 
 KiCAD (`pcbnew`, IPC UI sync) is Windows-bound, so this provider deploys as
@@ -62,10 +77,14 @@ node dist/index.js
 .\scripts\check-health.ps1 -Port 3100
 ```
 
-- Persistence: register as a Windows service (NSSM) or a Task Scheduler
-  "at startup" task running the commands above; restart on failure.
-- Liveness: poll `scripts\check-health.ps1` (wraps `GET /healthz`) from the
-  scheduler or monitor; no credentials, no side effects.
+- Persistence: use the built-in Task Scheduler lifecycle in
+  `scripts\windows-service.ps1`; it supports install/start/health/stop/
+  restart/reconnect without a third-party scheduler wrapper.
+- Liveness: `GET /healthz` (or `scripts\check-health.ps1`) proves only that
+  the provider process is alive; it is deliberately not backend readiness.
+- Native acceptance: follow `docs/WINDOWS_NATIVE_ACCEPTANCE.md`. The native
+  lane records exact Windows/KiCad/source/backend/provider-contract/fixture
+  identity and must run on a real Windows + KiCad host.
 - Updates without rebuild: `docs\TOOL_GUIDE.md` is read at runtime — it can
   be replaced on disk (read-only ACL recommended); `contract_hash` changes
   accordingly and clients re-fetch `help`.
