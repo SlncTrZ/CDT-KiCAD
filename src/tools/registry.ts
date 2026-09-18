@@ -313,6 +313,8 @@ export const directToolNames = [
 
   // UI management
   "get_backend_state",
+  "reconnect_backend",
+  "rebind_backend_session",
   "check_kicad_ui",
 ];
 

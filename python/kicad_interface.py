@@ -245,9 +245,10 @@ if KICAD_BACKEND in ("auto", "ipc"):
 
 # Import the SWIG pcbnew module whenever it isn't explicitly disabled.
 #
-# pcbnew is the *fallback* backend even when IPC is the primary one: an
-# IPC-pinned session that later downgrades to SWIG (GUI busy or closed, or the
-# #223 stale-board safety) still needs pcbnew to load/edit the board. The old
+# pcbnew remains available beside IPC for SWIG-owned sessions and explicitly
+# classified saved-file reads. An IPC-owned session never silently transfers
+# ownership to SWIG after transport loss; it enters degraded_uncertain instead.
+# The old
 # `not USE_IPC_BACKEND` guard skipped this import whenever IPC connected at
 # startup, so those later SWIG board ops hit "name 'pcbnew' is not defined" —
 # surfaced to callers as a bogus "dehydrated SWIG proxy that could not be
@@ -422,6 +423,11 @@ class KiCADInterface(SchematicHandlersMixin):
         # loaded yet; commands then follow connectivity-based routing.
         self.session_backend: Optional[str] = None
         self.session_board_path: Optional[str] = None
+        # Truthful lifecycle state is distinct from backend ownership. An IPC
+        # owner that loses its live connection remains the owner, but enters
+        # degraded_uncertain until an explicit identity-checked reconnect/rebind.
+        self.session_state: str = "none"
+        self.session_state_reason: Optional[str] = None
 
         if self.use_ipc:
             logger.info("Initializing with IPC backend (real-time UI sync enabled)")
@@ -697,6 +703,8 @@ class KiCADInterface(SchematicHandlersMixin):
             "import_svg_logo": self._handle_import_svg_logo,
             # UI/Process management commands
             "get_backend_state": self._handle_get_backend_state,
+            "reconnect_backend": self._handle_reconnect_backend,
+            "rebind_backend_session": self._handle_rebind_backend_session,
             "check_kicad_ui": self._handle_check_kicad_ui,
             "launch_kicad_ui": self._handle_launch_kicad_ui,
             # Internal warm-up (pays wxApp init cost during startup)
@@ -866,55 +874,337 @@ class KiCADInterface(SchematicHandlersMixin):
             and self._ipc_board_path_matches(self.session_board_path)
         ):
             self.session_backend = "ipc"
+            self.session_state = "ipc"
+            self.session_state_reason = None
             self._refresh_ipc_board_api()
         else:
             self.session_backend = "swig"
+            self.session_state = "swig"
+            self.session_state_reason = None
         logger.info(
             "Session backend pinned to %s for %s", self.session_backend, self.session_board_path
         )
 
     def _session_allows_ipc(self) -> bool:
-        """Whether the session pin permits routing board commands over IPC."""
+        """Whether session ownership and health permit live IPC routing."""
+        state = getattr(self, "session_state", None)
+        if state == "degraded_uncertain":
+            return False
         return getattr(self, "session_backend", None) != "swig"
 
     def _ipc_session_alive(self) -> bool:
         backend = getattr(self, "ipc_backend", None)
         return bool(backend and backend.is_connected())
 
-    def _downgrade_session_to_swig(self) -> None:
-        """Fall back to SWIG when an IPC-pinned session loses its connection.
+    def _mark_session_degraded(self, reason: str) -> None:
+        """Preserve IPC ownership while marking live state as uncertain.
 
-        Reloads the board from disk so SWIG operates on the last-saved state
-        rather than a stale pre-IPC copy.
+        Never reloads the disk board and never mutates the SWIG fallback. The
+        GUI may contain unsaved edits, so disk state cannot become authoritative
+        merely because the IPC transport disappeared.
         """
-        logger.warning(
-            "IPC connection lost for the pinned session; falling back to SWIG " "for %s",
-            self.session_board_path,
-        )
-        path = self.session_board_path
-        if path and Path(path).exists():
-            recovered = self._safe_load_board(path)
-            if recovered is not None:
-                self.board = recovered
-                project_commands = getattr(self, "project_commands", None)
-                if project_commands is not None:
-                    project_commands.board = recovered
-                self._update_command_handlers()
-                self._record_board_signature()
-            else:
-                logger.error(
-                    "Downgrade to SWIG could not reload the board from %s — "
-                    "clearing the stale SWIG fallback",
-                    path,
-                )
-                self._clear_swig_board_state()
-        elif path:
-            logger.warning("Downgrade to SWIG: board file is no longer accessible at %s", path)
-            self._clear_swig_board_state()
-        else:
-            self._clear_swig_board_state()
-        self.session_backend = "swig"
+        if getattr(self, "session_backend", None) != "ipc":
+            return
+        self.session_state = "degraded_uncertain"
+        self.session_state_reason = reason
         self.ipc_board_api = None
+        logger.warning(
+            "IPC-owned session entered degraded_uncertain for %s: %s",
+            self.session_board_path,
+            reason,
+        )
+
+    def _sync_session_health(self) -> str:
+        """Refresh only health state; never changes backend ownership."""
+        backend = getattr(self, "session_backend", None)
+        state = getattr(self, "session_state", "none")
+        if backend == "ipc" and state == "ipc" and not self._ipc_session_alive():
+            self._mark_session_degraded("ipc_connection_lost")
+        elif backend is None:
+            self.session_state = "none"
+            self.session_state_reason = None
+        elif backend == "swig":
+            self.session_state = "swig"
+            self.session_state_reason = None
+        return getattr(self, "session_state", "none")
+
+    def _degraded_failure(self, command: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        """Typed fail-closed response for operations requiring authoritative live state."""
+        detail = reason or getattr(self, "session_state_reason", None) or "ipc_state_uncertain"
+        message = (
+            f"Refusing {command}: the IPC-owned board session is degraded/uncertain; "
+            "live GUI state may differ from the saved board. Reconnect with identity "
+            "verification or explicitly rebind before continuing."
+        )
+        return {
+            "success": False,
+            "message": message,
+            "error": {
+                "kind": "provider_unavailable",
+                "retryable": True,
+                "message": message,
+            },
+            "sessionBackend": getattr(self, "session_backend", None),
+            "sessionState": "degraded_uncertain",
+            "sessionBoardPath": getattr(self, "session_board_path", None),
+            "reason": detail,
+            "backend": "degraded_uncertain",
+            "_backend": "degraded_uncertain",
+            "_realtime": False,
+        }
+
+    def _handle_reconnect_backend(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reconnect an IPC-owned session only if the live document identity matches."""
+        if getattr(self, "session_backend", None) != "ipc" or not self.session_board_path:
+            message = "No IPC-owned board session exists to reconnect"
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "conflict", "retryable": False, "message": message},
+                "sessionState": getattr(self, "session_state", "none"),
+            }
+
+        if not self._try_enable_ipc_backend(force=True) or not self._ipc_session_alive():
+            self._mark_session_degraded("ipc_reconnect_failed")
+            return self._degraded_failure("reconnect_backend", "ipc_reconnect_failed")
+
+        backend = getattr(self, "ipc_backend", None)
+        try:
+            observed_path = backend.get_open_board_path() if backend else None
+        except Exception as exc:
+            self._mark_session_degraded("ipc_document_identity_unavailable")
+            return self._degraded_failure(
+                "reconnect_backend", f"ipc_document_identity_unavailable: {exc}"
+            )
+
+        expected = self._normalize_board_path(self.session_board_path)
+        observed = self._normalize_board_path(observed_path)
+        if not observed or observed != expected:
+            self._mark_session_degraded("ipc_document_identity_mismatch")
+            message = (
+                "IPC reconnected, but the live KiCad document does not match the "
+                "session-owned board; ownership remains degraded/uncertain."
+            )
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "conflict", "retryable": False, "message": message},
+                "sessionBackend": "ipc",
+                "sessionState": "degraded_uncertain",
+                "expectedBoardPath": self.session_board_path,
+                "observedBoardPath": observed_path,
+                "reason": "ipc_document_identity_mismatch",
+            }
+
+        if not self._refresh_ipc_board_api():
+            self._mark_session_degraded("ipc_board_api_unavailable")
+            return self._degraded_failure("reconnect_backend", "ipc_board_api_unavailable")
+
+        self.session_state = "ipc"
+        self.session_state_reason = None
+        return {
+            "success": True,
+            "message": "IPC session reconnected with matching document identity",
+            "backend": "ipc",
+            "sessionBackend": "ipc",
+            "sessionState": "ipc",
+            "boardPath": self.session_board_path,
+            "realtime": True,
+        }
+
+    def _handle_rebind_backend_session(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Explicitly transfer a session to IPC or saved-disk SWIG state."""
+        target = str(params.get("targetBackend") or "").strip().lower()
+        if target not in {"ipc", "swig"}:
+            message = "targetBackend must be 'ipc' or 'swig'"
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "validation_error", "retryable": False, "message": message},
+            }
+
+        current_path = getattr(self, "session_board_path", None)
+        if not current_path:
+            message = "No board session exists to rebind"
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "conflict", "retryable": False, "message": message},
+            }
+
+        if target == "ipc":
+            if getattr(self, "session_backend", None) == "ipc":
+                return self._handle_reconnect_backend(params)
+            if not self._try_enable_ipc_backend(force=True) or not self._ipc_session_alive():
+                message = "IPC backend is not available for explicit rebind"
+                return {
+                    "success": False,
+                    "message": message,
+                    "error": {
+                        "kind": "provider_unavailable",
+                        "retryable": True,
+                        "message": message,
+                    },
+                    "sessionBackend": getattr(self, "session_backend", None),
+                    "sessionState": getattr(self, "session_state", "none"),
+                }
+            backend = getattr(self, "ipc_backend", None)
+            try:
+                observed_path = backend.get_open_board_path() if backend else None
+            except Exception as exc:
+                message = f"Cannot verify live KiCad document identity: {exc}"
+                return {
+                    "success": False,
+                    "message": message,
+                    "error": {
+                        "kind": "provider_unavailable",
+                        "retryable": True,
+                        "message": message,
+                    },
+                }
+            if self._normalize_board_path(observed_path) != self._normalize_board_path(
+                current_path
+            ):
+                message = "Live KiCad document does not match the SWIG-owned session board"
+                return {
+                    "success": False,
+                    "message": message,
+                    "error": {"kind": "conflict", "retryable": False, "message": message},
+                    "expectedBoardPath": current_path,
+                    "observedBoardPath": observed_path,
+                }
+            if not self._refresh_ipc_board_api():
+                message = "IPC connected but the live board API is unavailable"
+                return {
+                    "success": False,
+                    "message": message,
+                    "error": {
+                        "kind": "provider_unavailable",
+                        "retryable": True,
+                        "message": message,
+                    },
+                }
+            self.session_backend = "ipc"
+            self.session_state = "ipc"
+            self.session_state_reason = "explicit_rebind_to_live_ipc"
+            return {
+                "success": True,
+                "message": "Session explicitly rebound to matching live KiCad IPC document",
+                "backend": "ipc",
+                "sessionBackend": "ipc",
+                "sessionState": "ipc",
+                "boardPath": self.session_board_path,
+                "source": "live_ipc",
+                "reason": self.session_state_reason,
+            }
+
+        board_path = params.get("boardPath") or current_path
+        expected = self._normalize_board_path(current_path)
+        requested = self._normalize_board_path(board_path)
+        if not requested or (expected and requested != expected):
+            message = "SWIG rebind board identity does not match the current session"
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "conflict", "retryable": False, "message": message},
+                "expectedBoardPath": getattr(self, "session_board_path", None),
+                "requestedBoardPath": board_path,
+            }
+
+        if getattr(self, "session_backend", None) == "ipc" and not params.get(
+            "confirmDiscardLiveState", False
+        ):
+            message = (
+                "Rebinding an IPC-owned session to SWIG can discard unsaved GUI state; "
+                "set confirmDiscardLiveState=true to make that choice explicit."
+            )
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "conflict", "retryable": False, "message": message},
+                "sessionBackend": "ipc",
+                "sessionState": getattr(self, "session_state", "ipc"),
+            }
+
+        if not board_path or not Path(str(board_path)).exists():
+            message = f"Board file is unavailable for SWIG rebind: {board_path}"
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "not_found", "retryable": False, "message": message},
+            }
+
+        recovered = self._safe_load_board(str(board_path))
+        if recovered is None:
+            message = f"Could not load board for SWIG rebind: {board_path}"
+            return {
+                "success": False,
+                "message": message,
+                "error": {"kind": "provider_unavailable", "retryable": True, "message": message},
+            }
+
+        self.board = recovered
+        project_commands = getattr(self, "project_commands", None)
+        if project_commands is not None:
+            project_commands.board = recovered
+        self._update_command_handlers()
+        self._record_board_signature()
+        self.session_backend = "swig"
+        self.session_state = "swig"
+        self.session_state_reason = "explicit_rebind_to_saved_disk_state"
+        self.ipc_board_api = None
+        return {
+            "success": True,
+            "message": "Session explicitly rebound to the saved board through SWIG",
+            "backend": "swig",
+            "sessionBackend": "swig",
+            "sessionState": "swig",
+            "boardPath": self.session_board_path,
+            "source": "disk",
+            "reason": self.session_state_reason,
+        }
+
+    def _serve_degraded_file_read(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Serve an explicitly whitelisted read from a fresh saved-disk board.
+
+        The temporary board is never promoted to session ownership and never
+        auto-saved. This prevents a pre-IPC stale SWIG object from masquerading
+        as the saved file while the live GUI state is unavailable.
+        """
+        board_path = getattr(self, "session_board_path", None)
+        if not board_path or not Path(board_path).exists():
+            return self._degraded_failure(command, "saved_board_unavailable_for_read")
+
+        disk_board = self._safe_load_board(board_path)
+        if disk_board is None:
+            return self._degraded_failure(command, "saved_board_unreadable_for_read")
+
+        handler = self.command_routes.get(command)
+        if handler is None:
+            return self._degraded_failure(command, "file_read_handler_unavailable")
+
+        previous_board = getattr(self, "board", None)
+        try:
+            self.board = disk_board
+            self._update_command_handlers()
+            result = handler(params)
+        finally:
+            self.board = previous_board
+            self._update_command_handlers()
+
+        if not isinstance(result, dict):
+            result = {"success": False, "message": "Invalid file-read handler response"}
+        result["_backend"] = "swig"
+        result["_realtime"] = False
+        result["_source"] = "disk"
+        result["_backend_reason"] = "ipc_session_degraded_read_fallback"
+        result["_backend_note"] = (
+            "IPC session is degraded/uncertain; this explicitly classified read "
+            "was answered from a fresh saved-disk board without changing ownership."
+        )
+        result["sessionBackend"] = "ipc"
+        result["sessionState"] = "degraded_uncertain"
+        return result
 
     def _refresh_ipc_board_api(self) -> bool:
         """Refresh the IPC board API after KiCAD or a board becomes available."""
@@ -961,19 +1251,20 @@ class KiCADInterface(SchematicHandlersMixin):
             return False
 
     def _backend_status(self) -> Dict[str, Any]:
-        """Return backend status fields for command responses.
-
-        When a project is loaded, the session pin is the truth about which
-        backend serves board commands — reporting connectivity alone misled
-        users in #223 (get_backend_state said "ipc" while every project
-        command actually ran on SWIG).
-        """
+        """Return backend ownership plus current session health."""
+        state = self._sync_session_health()
         ipc_backend = getattr(self, "ipc_backend", None)
         ipc_connected = ipc_backend.is_connected() if ipc_backend else False
         session = getattr(self, "session_backend", None)
-        backend = session or ("ipc" if self.use_ipc and ipc_connected else "swig")
+        if state == "degraded_uncertain":
+            backend = "degraded_uncertain"
+        else:
+            backend = session or ("ipc" if self.use_ipc and ipc_connected else "swig")
         return {
             "backend": backend,
+            "session_state": state,
+            "session_backend": session,
+            "session_reason": getattr(self, "session_state_reason", None),
             "realtime_sync": backend == "ipc" and ipc_connected,
             "ipc_connected": ipc_connected,
         }
@@ -991,10 +1282,12 @@ class KiCADInterface(SchematicHandlersMixin):
         if command in {
             "get_backend_info",
             "get_backend_state",
+            "reconnect_backend",
+            "rebind_backend_session",
             "check_kicad_ui",
             "launch_kicad_ui",
         }:
-            return result.get("backend", "ipc" if self.use_ipc else "swig")
+            return result.get("backend", result.get("_backend", "ipc" if self.use_ipc else "swig"))
 
         if command in self.IPC_DIRECT_COMMANDS:
             return "ipc" if self.use_ipc else "unavailable"
@@ -1011,15 +1304,16 @@ class KiCADInterface(SchematicHandlersMixin):
         logger.debug(f"Command parameters: {params}")
 
         try:
+            state = self._sync_session_health()
+            if state == "degraded_uncertain":
+                if command in self.FILE_ANSWERABLE_READS:
+                    return self._serve_degraded_file_read(command, params)
+                close_without_save = command == "close_project" and not params.get("save", True)
+                if not close_without_save and command not in self.DEGRADED_CONTROL_COMMANDS:
+                    return self._degraded_failure(command)
+
             if command in self.IPC_CAPABLE_COMMANDS and self._session_allows_ipc():
                 self._try_enable_ipc_backend()
-                # An IPC-pinned session whose connection died (GUI closed)
-                # falls back to SWIG on the last-saved on-disk state.
-                if (
-                    getattr(self, "session_backend", None) == "ipc"
-                    and not self._ipc_session_alive()
-                ):
-                    self._downgrade_session_to_swig()
 
             # Check if we can use IPC for this command (real-time UI sync).
             # A session pinned to SWIG never routes board commands over IPC,
@@ -1138,6 +1432,8 @@ class KiCADInterface(SchematicHandlersMixin):
                                 # to the old board's IPC context (#223).
                                 self.session_backend = None
                                 self.session_board_path = None
+                                self.session_state = "none"
+                                self.session_state_reason = None
                                 # Surface the truth — never claim success when
                                 # the board is unusable.
                                 return {
@@ -1167,6 +1463,7 @@ class KiCADInterface(SchematicHandlersMixin):
                         # callers can see which backend owns the session.
                         self._pin_session_backend(self._current_board_path())
                         result["_backend"] = self.session_backend
+                        result["sessionState"] = self.session_state
                         result["_realtime"] = self.session_backend == "ipc"
                         result["sessionBackend"] = self.session_backend
                     elif command == "save_project":
@@ -1243,6 +1540,17 @@ class KiCADInterface(SchematicHandlersMixin):
         "connect_passthrough",
         "connect_to_net",
         "set_footprint_type",
+    }
+
+    # Fail closed while live IPC truth is unavailable. New commands are denied
+    # automatically unless they are explicitly reviewed as safe control/status.
+    DEGRADED_CONTROL_COMMANDS = {
+        "get_backend_state",
+        "get_backend_info",
+        "check_kicad_ui",
+        "launch_kicad_ui",
+        "reconnect_backend",
+        "rebind_backend_session",
     }
 
     @staticmethod
@@ -1818,6 +2126,8 @@ class KiCADInterface(SchematicHandlersMixin):
                     # the optional open-document query is unavailable.
                     self.session_board_path = self._normalize_board_path(board_path)
                     self.session_backend = "ipc"
+                    self.session_state = "ipc"
+                    self.session_state_reason = None
                     self._refresh_ipc_board_api()
                 else:
                     self._pin_session_backend(board_path)
@@ -1850,8 +2160,8 @@ class KiCADInterface(SchematicHandlersMixin):
 
     def _handle_batch_move_components(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Batch move wrapper that preserves the external-edit save guard."""
-        if getattr(self, "session_backend", None) == "ipc" and not self._ipc_session_alive():
-            self._downgrade_session_to_swig()
+        if self._sync_session_health() == "degraded_uncertain":
+            return self._degraded_failure("batch_move_components")
 
         # The IPC BoardAPI currently exposes only single-component moves, each
         # with its own commit. Falling through to ComponentCommands here would
@@ -1959,6 +2269,8 @@ class KiCADInterface(SchematicHandlersMixin):
         self.ipc_board_api = None
         self.session_backend = None
         self.session_board_path = None
+        self.session_state = "none"
+        self.session_state_reason = None
         self.project_filename = None
         self._current_project_path = None
 
@@ -4847,7 +5159,7 @@ class KiCADInterface(SchematicHandlersMixin):
             # KiCAD launched can fall up from SWIG to IPC.
             processes = manager.get_process_info()
             is_running = len(processes) > 0
-            if is_running:
+            if is_running and getattr(self, "session_state", "none") != "degraded_uncertain":
                 self._try_enable_ipc_backend()
 
             return {
@@ -4874,7 +5186,10 @@ class KiCADInterface(SchematicHandlersMixin):
             path_obj = Path(project_path) if project_path else None
 
             result = check_and_launch_kicad(path_obj, auto_launch)
-            if result.get("running"):
+            if (
+                result.get("running")
+                and getattr(self, "session_state", "none") != "degraded_uncertain"
+            ):
                 self._try_enable_ipc_backend(force=True)
 
             return {"success": True, **result, **self._backend_status()}
@@ -5869,25 +6184,36 @@ print("ok")
     # =========================================================================
 
     def _handle_get_backend_info(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Get information about the current backend"""
-        if KiCADProcessManager.is_running():
+        """Get information about backend ownership and current availability."""
+        if (
+            KiCADProcessManager.is_running()
+            and getattr(self, "session_state", "none") != "degraded_uncertain"
+        ):
             self._try_enable_ipc_backend()
         status = self._backend_status()
         ipc_backend = getattr(self, "ipc_backend", None)
+        if status["backend"] == "ipc":
+            message = "Using IPC backend with real-time UI sync"
+        elif status["backend"] == "degraded_uncertain":
+            message = (
+                "IPC owns the session but live state is degraded/uncertain; "
+                "mutations are refused until explicit reconnect/rebind"
+            )
+        else:
+            message = "Using SWIG backend (requires manual reload)"
         return {
             "success": True,
             **status,
             "version": ipc_backend.get_version() if ipc_backend else "N/A",
-            "message": (
-                "Using IPC backend with real-time UI sync"
-                if status["backend"] == "ipc"
-                else "Using SWIG backend (requires manual reload)"
-            ),
+            "message": message,
         }
 
     def _handle_get_backend_state(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Return the MCP/KiCad backend state and currently loaded file state."""
-        if KiCADProcessManager.is_running():
+        """Return truthful ownership, health, identity, and saved-file state."""
+        if (
+            KiCADProcessManager.is_running()
+            and getattr(self, "session_state", "none") != "degraded_uncertain"
+        ):
             self._try_enable_ipc_backend()
 
         status = self._backend_status()
@@ -5896,6 +6222,7 @@ print("ok")
         dirty_state = self._dirty_state(board_path)
         loaded_board = board_path is not None
         loaded_project = project_path is not None
+        degraded = status["session_state"] == "degraded_uncertain"
 
         return {
             "success": True,
@@ -5908,13 +6235,17 @@ print("ok")
             "loadedBoard": loaded_board,
             "projectPath": project_path,
             "boardPath": board_path,
-            "sessionBackend": getattr(self, "session_backend", None),
+            "sessionBackend": status["session_backend"],
+            "sessionState": status["session_state"],
+            "sessionReason": status["session_reason"],
             "sessionBoardPath": getattr(self, "session_board_path", None),
-            "dirty": dirty_state["dirty"],
-            "dirtyReason": dirty_state["dirtyReason"],
+            "dirty": None if degraded else dirty_state["dirty"],
+            "dirtyReason": (
+                "live_state_uncertain_after_ipc_loss" if degraded else dirty_state["dirtyReason"]
+            ),
             "diskChangedExternally": dirty_state["diskChangedExternally"],
             "message": (
-                f"{status['backend']} backend; "
+                f"{status['backend']} backend state; "
                 f"{'board loaded' if loaded_board else 'no board loaded'}"
             ),
         }

@@ -5,9 +5,9 @@
      in this file are preserved, so improving the wording here is safe. -->
 
 **Version:** 2.7.0-cdt.1
-**Tools registered on the server:** 236
-**Tools indexed for keyword discovery:** 176 in 16 categories
-**Last updated:** 2026-09-11
+**Tools registered on the server:** 238
+**Tools indexed for keyword discovery:** 178 in 16 categories
+**Last updated:** 2026-09-18
 
 ## How to read this document
 
@@ -443,15 +443,17 @@ _Source: `src/tools/pcb-import.ts`_
 
 ---
 
-## KiCad UI and Backend (3 tools)
+## KiCad UI and Backend (5 tools)
 
 _Source: `src/tools/ui.ts`_
 
-| Tool                | Description                                                                              | Discovery |
-| ------------------- | ---------------------------------------------------------------------------------------- | --------- |
-| `get_backend_state` | Return the active backend, realtime status, loaded project/board paths, and dirty state. | Essential |
-| `check_kicad_ui`    | Check if KiCAD UI is running                                                             | Essential |
-| `launch_kicad_ui`   | Launch KiCAD UI (optionally with project)                                                | `board`   |
+| Tool                     | Description                                                                                                     | Discovery |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- | --------- |
+| `get_backend_state`      | Return the active backend, realtime status, loaded project/board paths, and dirty state.                        | Essential |
+| `reconnect_backend`      | Reconnect an IPC-owned board session only when the live KiCAD document identity still matches the pinned board. | Essential |
+| `rebind_backend_session` | Explicitly rebind backend ownership.                                                                            | Essential |
+| `check_kicad_ui`         | Check if KiCAD UI is running                                                                                    | Essential |
+| `launch_kicad_ui`        | Launch KiCAD UI (optionally with project)                                                                       | `board`   |
 
 ---
 
@@ -516,15 +518,15 @@ _Source: `src/tools/help.ts`_
 | `freerouting.ts`         | Freerouting Autorouter                 | 4       |
 | `eagle.ts`               | Eagle Import                           | 1       |
 | `pcb-import.ts`          | PCB Import                             | 1       |
-| `ui.ts`                  | KiCad UI and Backend                   | 3       |
+| `ui.ts`                  | KiCad UI and Backend                   | 5       |
 | `router.ts`              | Tool Discovery                         | 3       |
 | `digikey-api.ts`         | digikey-api.ts                         | 3       |
 | `help.ts`                | help.ts                                | 3       |
-| **Total**                |                                        | **236** |
+| **Total**                |                                        | **238** |
 
 ## Summary by discovery category
 
-These are the categories `search_tools` searches. They cover 176 of the 236 registered tools.
+These are the categories `search_tools` searches. They cover 178 of the 238 registered tools.
 
 | Category                   | Tools indexed |
 | -------------------------- | ------------- |
@@ -544,6 +546,6 @@ These are the categories `search_tools` searches. They cover 176 of the 236 regi
 | `validation`               | 2             |
 | `parts-registry`           | 3             |
 | `digikey`                  | 3             |
-| **Indexed total**          | **176**       |
+| **Indexed total**          | **178**       |
 | Registered but not indexed | 60            |
-| **Registered total**       | **236**       |
+| **Registered total**       | **238**       |

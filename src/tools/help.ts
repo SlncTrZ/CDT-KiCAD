@@ -64,6 +64,137 @@ function capabilitySummary(): string[] {
   ];
 }
 
+type RuntimeBackendState = {
+  backend: string;
+  sessionState: string;
+  sessionBackend: string | null;
+  loadedBoard: boolean | null;
+  realtime: boolean;
+  reason: string | null;
+};
+
+const BOARD_REQUIRED_CAPABILITIES = new Set([
+  "common.document.info",
+  "common.document.save",
+  "common.document.save_as",
+  "common.document.close",
+  "common.object.list",
+  "common.object.get",
+  "common.object.count",
+  "common.organization.list",
+  "common.transform.move",
+  "common.transform.rotate",
+  "common.export_asset",
+  "common.validate.document",
+  "common.inspect.object",
+  "common.measure.bounds",
+  "kicad.board.edit",
+  "kicad.routing.autoroute",
+  "kicad.export.fabrication",
+  "kicad.drc.erc",
+]);
+
+const DEGRADED_DISK_READ_CAPABILITIES = new Set(["common.document.info", "common.object.get"]);
+
+function normalizeBackendState(raw: unknown): RuntimeBackendState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const state = raw as Record<string, unknown>;
+  const backend = typeof state.backend === "string" ? state.backend : "unknown";
+  const sessionState =
+    typeof state.sessionState === "string"
+      ? state.sessionState
+      : typeof state.session_state === "string"
+        ? state.session_state
+        : backend;
+  const sessionBackend =
+    typeof state.sessionBackend === "string"
+      ? state.sessionBackend
+      : typeof state.session_backend === "string"
+        ? state.session_backend
+        : null;
+  const loadedBoard =
+    typeof state.loadedBoard === "boolean"
+      ? state.loadedBoard
+      : typeof state.loaded_board === "boolean"
+        ? state.loaded_board
+        : null;
+  const realtime =
+    typeof state.realtime_sync === "boolean"
+      ? state.realtime_sync
+      : typeof state.realtime === "boolean"
+        ? state.realtime
+        : false;
+  const reason =
+    typeof state.sessionReason === "string"
+      ? state.sessionReason
+      : typeof state.session_reason === "string"
+        ? state.session_reason
+        : null;
+
+  return { backend, sessionState, sessionBackend, loadedBoard, realtime, reason };
+}
+
+/**
+ * Project static implementation declarations into truthful runtime availability.
+ * supported is kept for compatibility; implemented and available_now distinguish
+ * code existence from whether the current session can safely use it.
+ */
+export function buildRuntimeCapabilityMap(backendInfo: unknown): Record<string, unknown> {
+  const state = normalizeBackendState(backendInfo);
+
+  return Object.fromEntries(
+    Object.entries(CAPABILITIES).map(([name, entry]) => {
+      let availableNow = entry.supported;
+      let reason = entry.reason;
+
+      if (
+        entry.supported &&
+        (!state || state.backend === "unknown" || state.sessionState === "unknown")
+      ) {
+        availableNow = false;
+        reason = "runtime_context_unavailable";
+      } else if (entry.supported && state) {
+        const boardRequired = BOARD_REQUIRED_CAPABILITIES.has(name);
+        if (boardRequired && state.sessionState === "degraded_uncertain") {
+          if (DEGRADED_DISK_READ_CAPABILITIES.has(name)) {
+            availableNow = true;
+            reason = "saved_disk_read_only_while_live_state_uncertain";
+          } else {
+            availableNow = false;
+            reason = "ipc_session_degraded_uncertain";
+          }
+        } else if (boardRequired && state.loadedBoard === false) {
+          availableNow = false;
+          reason = "no_board_loaded";
+        }
+      }
+
+      return [
+        name,
+        {
+          ...entry,
+          implemented: entry.supported,
+          available_now: availableNow,
+          reason,
+          backend: state?.backend ?? "unknown",
+          context: {
+            session_state: state?.sessionState ?? "unknown",
+            session_backend: state?.sessionBackend ?? null,
+            loaded_board: state?.loadedBoard ?? null,
+            realtime: state?.realtime ?? false,
+            source:
+              state?.sessionState === "degraded_uncertain" &&
+              DEGRADED_DISK_READ_CAPABILITIES.has(name)
+                ? "disk"
+                : (state?.backend ?? "unknown"),
+            state_reason: state?.reason ?? null,
+          },
+        },
+      ];
+    }),
+  );
+}
+
 /**
  * Register help, system_status and system_capabilities on the MCP server.
  */
@@ -122,19 +253,35 @@ export function registerHelpTools(server: McpServer, getBackendInfo?: BackendInf
 
   server.tool(
     "system_capabilities",
-    "Read-only machine-readable capability map with supported/unsupported modes and refusal reasons. Preflight before calling mutating tools. No side effects.",
+    "Read-only machine-readable capability map separating implementation from live availability. Preflight before mutating tools. No side effects.",
     {},
     async () => {
+      let backendInfo: unknown = null;
+      if (getBackendInfo) {
+        try {
+          backendInfo = await getBackendInfo();
+        } catch (error) {
+          backendInfo = {
+            backend: "unknown",
+            sessionState: "unknown",
+            sessionReason:
+              "backend_state_unavailable: " +
+              (error instanceof Error ? error.message : String(error)),
+          };
+        }
+      }
+
       const result = {
         provider_name: PROVIDER_ID,
         contract_version: CONTRACT_VERSION,
         common_contract_version: COMMON_CONTRACT_VERSION,
         backend_note:
-          "swig (file-based pcbnew) or ipc (live KiCAD UI, experimental); never silently downgraded — mismatched backend returns unsupported_capability",
-        capabilities: CAPABILITIES,
+          "Session states are none|swig|ipc|degraded_uncertain. An IPC-owned session never silently downgrades to SWIG; degraded mutations fail closed until explicit reconnect/rebind.",
+        backend: backendInfo,
+        capabilities: buildRuntimeCapabilityMap(backendInfo),
         error_kinds: [...ERROR_KINDS],
         refusal_policy:
-          "Unsupported capabilities fail with kind unsupported_capability (retryable: false). No fake success, no silent fallback.",
+          "implemented describes code support; available_now describes the current session. Temporary degraded-state refusals use provider_unavailable; permanently unsupported capabilities use unsupported_capability.",
       };
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },

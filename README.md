@@ -45,8 +45,8 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standa
 
 **Key Capabilities:**
 
-- 236 tools registered, 176 of them indexed for keyword discovery
-- 176 tools across 16 categories with JSON Schema validation
+- 238 tools registered, 178 of them indexed for keyword discovery
+- 178 tools across 16 categories with JSON Schema validation
 - Keyword tool discovery via `search_tools` / `get_category_tools`
 - 23 dynamic resources exposing project state
 - Complete schematic workflow with 65 tools (authoring, batch edits, hierarchy, layout) and dynamic symbol loading (~10,000 symbols)
@@ -496,7 +496,7 @@ keyword instead of guessing:
 
 - **32 essential tools** that `search_tools` surfaces first, covering the
   operations nearly every session needs
-- **176 tools indexed across 16 categories** (board, component, export, drc,
+- **178 tools indexed across 16 categories** (board, component, export, drc,
   schematic, library, symbol_library, symbol_pins, schematic_hierarchy,
   schematic_layout, schematic_batch, routing, autoroute, validation,
   parts-registry, digikey)
@@ -575,10 +575,10 @@ Access project state without executing tools:
 
 ## Available Tools
 
-The server exposes every tool directly, so your assistant can call any of them without a discovery step -- just ask for what you want to accomplish. **176 tools** are additionally indexed into 16 functional categories, so `search_tools` and `get_category_tools` can find one by keyword. Three of them (`help`, `system_status`, `system_capabilities`) are the read-only SlncTrZ provider contract — always visible, never mutating.
+The server exposes every tool directly, so your assistant can call any of them without a discovery step -- just ask for what you want to accomplish. **178 tools** are additionally indexed into 16 functional categories, so `search_tools` and `get_category_tools` can find one by keyword. Three of them (`help`, `system_status`, `system_capabilities`) are the read-only SlncTrZ provider contract — always visible, never mutating.
 
 The lists below are a curated tour of the most useful tools, not the full set.
-For the complete, generated reference of all 236 tools -- including how each one
+For the complete, generated reference of all 238 tools -- including how each one
 is discovered -- see [Tool Inventory](docs/TOOL_INVENTORY.md).
 
 ### Project Management (12 tools)
@@ -1555,7 +1555,7 @@ How many Basic parts are available?
 - **JSON-RPC 2.0 Transport:** Bi-directional communication via STDIO
 - **Protocol Version:** MCP 2025-06-18
 - **Capabilities:** Tools (233), Resources (23)
-- **Tool discovery:** keyword search catalogue indexing 176 tools in 16 categories
+- **Tool discovery:** keyword search catalogue indexing 178 tools in 16 categories
 - **Error Handling:** Standard JSON-RPC error codes
 
 ### TypeScript Server (`src/`)
@@ -1705,7 +1705,7 @@ npm run format
 
 See [STATUS_SUMMARY.md](docs/STATUS_SUMMARY.md) for the complete status matrix and [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
-**Working Features (236 tools):**
+**Working Features (238 tools):**
 
 - Project management with snapshot checkpointing
 - Complete board design (outline, layers, zones, mounting holes, text, SVG logos)
@@ -1730,7 +1730,8 @@ See [STATUS_SUMMARY.md](docs/STATUS_SUMMARY.md) for the complete status matrix a
 **IPC Backend (Experimental):**
 
 - Real-time UI synchronization via the KiCAD IPC API
-- 21 IPC-enabled commands with automatic SWIG fallback
+- 21 IPC-enabled commands with fail-closed degraded-session handling; only explicitly classified reads may use labeled saved-disk fallback
+- IPC ownership survives transport loss as `degraded_uncertain`; mutations are refused until `reconnect_backend` verifies live document identity or `rebind_backend_session` explicitly transfers ownership
 - Hybrid footprint loading (SWIG for library access, IPC for placement)
 
 **Developer Mode:**

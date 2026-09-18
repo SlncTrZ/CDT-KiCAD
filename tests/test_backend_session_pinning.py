@@ -283,24 +283,91 @@ class TestSessionTransitions:
         assert iface.session_board_path == iface._normalize_board_path(new_board_path)
         assert iface.session_backend == "swig"
 
-    def test_ipc_pinned_session_downgrades_when_connection_lost(self, tmp_path, monkeypatch):
+    def test_ipc_pinned_session_degrades_and_refuses_save_when_connection_lost(
+        self, tmp_path, monkeypatch
+    ):
         board_path = tmp_path / "proj" / "proj.kicad_pcb"
         iface, backend, holder, _, _ = _loaded_iface(
             tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
         )
         assert iface.session_backend == "ipc"
+        before = board_path.read_bytes()
 
-        backend.connected = False  # GUI closed
-        iface._safe_load_board = lambda path: _FakeBoard(path)
+        backend.connected = False  # GUI closed with potentially unsaved live edits
+
+        def _must_not_reload_from_disk(path):
+            raise AssertionError("degraded IPC session must not reload stale disk state")
+
+        iface._safe_load_board = _must_not_reload_from_disk
 
         result = iface.handle_command("save_project", {})
-        assert iface.session_backend == "swig"
+
+        assert result["success"] is False
+        assert result["error"]["kind"] == "provider_unavailable"
+        assert result["sessionState"] == "degraded_uncertain"
+        assert iface.session_backend == "ipc"  # ownership is preserved
+        assert iface.session_state == "degraded_uncertain"
+        assert holder.get("swig_saves") is None
+        assert board_path.read_bytes() == before
+
+    def test_degraded_whitelisted_read_uses_fresh_disk_and_labels_source(
+        self, tmp_path, monkeypatch
+    ):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        stale_board = iface.board
+        backend.connected = False
+        disk_board = _FakeBoard(board_path)
+        iface._safe_load_board = lambda path: disk_board
+        iface.command_routes["get_board_info"] = lambda params: {
+            "success": True,
+            "board": {"filename": iface.board.GetFileName()},
+        }
+
+        result = iface.handle_command("get_board_info", {})
+
+        assert result["success"] is True
         assert result["_backend"] == "swig"
-        assert holder.get("swig_saves") == 1
-        # The board must be RELOADED from disk, not left as the stale
-        # pre-IPC copy.
-        assert isinstance(iface.board, _FakeBoard)
-        assert iface.board.GetFileName() == iface.session_board_path
+        assert result["_source"] == "disk"
+        assert result["_backend_reason"] == "ipc_session_degraded_read_fallback"
+        assert result["sessionBackend"] == "ipc"
+        assert result["sessionState"] == "degraded_uncertain"
+        assert iface.session_backend == "ipc"
+        assert iface.board is stale_board
+
+    def test_degraded_unclassified_ipc_read_is_refused(self, tmp_path, monkeypatch):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        backend.connected = False
+        handler = MagicMock(return_value={"success": True, "components": []})
+        iface.command_routes["get_component_list"] = handler
+
+        result = iface.handle_command("get_component_list", {})
+
+        assert result["success"] is False
+        assert result["error"]["kind"] == "provider_unavailable"
+        assert result["sessionState"] == "degraded_uncertain"
+        handler.assert_not_called()
+
+    def test_degraded_unknown_board_mutation_fails_closed(self, tmp_path, monkeypatch):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        backend.connected = False
+        handler = MagicMock(return_value={"success": True})
+        iface.command_routes["future_board_mutation"] = handler
+
+        result = iface.handle_command("future_board_mutation", {"value": 1})
+
+        assert result["success"] is False
+        assert result["error"]["kind"] == "provider_unavailable"
+        assert result["sessionState"] == "degraded_uncertain"
+        handler.assert_not_called()
 
     def test_failed_reopen_clears_stale_pin(self, tmp_path, monkeypatch):
         """An unrecoverable open after a pinned session must drop the old pin.
@@ -335,6 +402,25 @@ class TestSessionTransitions:
         result = iface.handle_command("open_project", {"path": str(board_path)})
         assert iface.session_backend == "ipc"
         assert result["_backend"] == "ipc"
+
+    def test_swig_session_only_upgrades_via_explicit_identity_checked_rebind(
+        self, tmp_path, monkeypatch
+    ):
+        iface, backend, _, board_path, _ = _loaded_iface(
+            tmp_path, gui_board_path=None, monkeypatch=monkeypatch
+        )
+        assert iface.session_backend == "swig"
+
+        backend.open_board_path = str(board_path)
+        status = iface._handle_get_backend_state({})
+        assert status["sessionBackend"] == "swig"
+        assert status["sessionState"] == "swig"
+
+        rebound = iface._handle_rebind_backend_session({"targetBackend": "ipc"})
+        assert rebound["success"] is True
+        assert rebound["source"] == "live_ipc"
+        assert iface.session_backend == "ipc"
+        assert iface.session_state == "ipc"
 
 
 @pytest.mark.unit
@@ -648,18 +734,16 @@ class TestNewBoardLifecycleRouting:
         assert "move_component" in result["errorDetails"]
         iface.component_commands.batch_move_components.assert_not_called()
 
-    def test_batch_move_downgrades_and_uses_reloaded_swig_when_ipc_disconnected(
-        self, tmp_path, monkeypatch
-    ):
+    def test_batch_move_refuses_when_ipc_session_is_degraded(self, tmp_path, monkeypatch):
         board_path = tmp_path / "proj" / "proj.kicad_pcb"
         iface, backend, _, _, _ = _loaded_iface(
             tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
         )
         backend.connected = False
-        reloaded_board = _FakeBoard(board_path)
-        iface._safe_load_board = lambda path: reloaded_board
+        iface._safe_load_board = lambda path: (_ for _ in ()).throw(
+            AssertionError("must not reload disk state during degraded IPC ownership")
+        )
         iface.component_commands = MagicMock()
-        iface.component_commands.batch_move_components.return_value = {"success": True}
         iface.command_routes["batch_move_components"] = iface._handle_batch_move_components
 
         result = iface.handle_command(
@@ -667,10 +751,11 @@ class TestNewBoardLifecycleRouting:
             {"moves": {"R1": {"x": 1, "y": 2}}, "save": False},
         )
 
-        assert result["success"] is True
-        assert iface.session_backend == "swig"
-        assert iface.board is reloaded_board
-        iface.component_commands.batch_move_components.assert_called_once()
+        assert result["success"] is False
+        assert result["error"]["kind"] == "provider_unavailable"
+        assert result["sessionState"] == "degraded_uncertain"
+        assert iface.session_backend == "ipc"
+        iface.component_commands.batch_move_components.assert_not_called()
 
 
 @pytest.mark.unit
@@ -687,6 +772,113 @@ class TestBackendStateReporting:
         iface = _make_iface({}, _FakeIPCBackend(connected=True), use_ipc=True)
         status = iface._backend_status()
         assert status["backend"] == "ipc"
+
+    def test_backend_status_reports_degraded_uncertain_after_ipc_loss(self, tmp_path, monkeypatch):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        backend.connected = False
+
+        state = iface._handle_get_backend_state({})
+
+        assert state["backend"] == "degraded_uncertain"
+        assert state["sessionBackend"] == "ipc"
+        assert state["sessionState"] == "degraded_uncertain"
+        assert state["ipcConnected"] is False
+
+    def test_reconnect_restores_ipc_only_when_document_identity_matches(
+        self, tmp_path, monkeypatch
+    ):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        backend.connected = False
+        iface._handle_get_backend_state({})
+        assert iface.session_state == "degraded_uncertain"
+
+        backend.connected = True
+        backend.open_board_path = str(board_path)
+        result = iface._handle_reconnect_backend({})
+
+        assert result["success"] is True
+        assert result["sessionState"] == "ipc"
+        assert iface.session_backend == "ipc"
+        assert iface.session_state == "ipc"
+
+    def test_reconnect_refuses_different_live_document(self, tmp_path, monkeypatch):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        other_path = tmp_path / "other" / "other.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        backend.connected = False
+        iface._handle_get_backend_state({})
+        backend.connected = True
+        backend.open_board_path = str(other_path)
+
+        result = iface._handle_reconnect_backend({})
+
+        assert result["success"] is False
+        assert result["error"]["kind"] == "conflict"
+        assert iface.session_backend == "ipc"
+        assert iface.session_state == "degraded_uncertain"
+
+    def test_rebind_to_swig_requires_explicit_discard_and_same_identity(
+        self, tmp_path, monkeypatch
+    ):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        backend.connected = False
+        iface._handle_get_backend_state({})
+        recovered = _FakeBoard(board_path)
+        iface._safe_load_board = MagicMock(return_value=recovered)
+
+        refused = iface._handle_rebind_backend_session({"targetBackend": "swig"})
+        assert refused["success"] is False
+        assert refused["error"]["kind"] == "conflict"
+        iface._safe_load_board.assert_not_called()
+
+        rebound = iface._handle_rebind_backend_session(
+            {
+                "targetBackend": "swig",
+                "boardPath": str(board_path),
+                "confirmDiscardLiveState": True,
+            }
+        )
+        assert rebound["success"] is True
+        assert rebound["source"] == "disk"
+        assert iface.session_backend == "swig"
+        assert iface.session_state == "swig"
+        assert iface.board is recovered
+
+    def test_rebind_to_swig_rejects_different_board_identity(self, tmp_path, monkeypatch):
+        board_path = tmp_path / "proj" / "proj.kicad_pcb"
+        other_path = tmp_path / "other" / "other.kicad_pcb"
+        other_path.parent.mkdir(parents=True)
+        other_path.write_text("(kicad_pcb)")
+        iface, backend, _, _, _ = _loaded_iface(
+            tmp_path, gui_board_path=board_path, monkeypatch=monkeypatch
+        )
+        backend.connected = False
+        iface._handle_get_backend_state({})
+        iface._safe_load_board = MagicMock()
+
+        result = iface._handle_rebind_backend_session(
+            {
+                "targetBackend": "swig",
+                "boardPath": str(other_path),
+                "confirmDiscardLiveState": True,
+            }
+        )
+
+        assert result["success"] is False
+        assert result["error"]["kind"] == "conflict"
+        assert iface.session_state == "degraded_uncertain"
+        iface._safe_load_board.assert_not_called()
 
 
 @pytest.mark.unit
