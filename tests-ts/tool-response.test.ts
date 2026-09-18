@@ -52,6 +52,27 @@ describe("formatKicadResult", () => {
     expect(response.isError).toBeUndefined();
   });
 
+  it("preserves bridge runtime errors as canonical provider failures", () => {
+    const error = Object.assign(new Error("encoded runtime error"), {
+      kind: "rate_limited",
+      retryable: true,
+      providerMessage: "queue full",
+      details: { queue_depth: 32 },
+    });
+
+    const response = formatKicadException(error);
+    const payload = JSON.parse(response.content[0].text);
+
+    expect(response.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      kind: "rate_limited",
+      retryable: true,
+      message: "queue full",
+      details: { queue_depth: 32 },
+    });
+  });
+
   it("preserves uncertain operation receipts as a typed timeout error", () => {
     const store = new OperationReceiptStore();
     store.begin("op-timeout", "move_component", { reference: "R1" });

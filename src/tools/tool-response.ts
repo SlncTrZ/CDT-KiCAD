@@ -38,6 +38,22 @@ function isErrorKind(value: unknown): value is ErrorKind {
   return typeof value === "string" && (ERROR_KINDS as readonly string[]).includes(value);
 }
 
+function isProviderRuntimeError(
+  error: unknown,
+): error is Error & {
+  kind: ErrorKind;
+  retryable: boolean;
+  providerMessage: string;
+  details?: unknown;
+} {
+  return (
+    error instanceof Error &&
+    isErrorKind((error as { kind?: unknown }).kind) &&
+    typeof (error as { retryable?: unknown }).retryable === "boolean" &&
+    typeof (error as { providerMessage?: unknown }).providerMessage === "string"
+  );
+}
+
 function sanitizeDiagnosticText(value: string): string {
   let sanitized = value;
   const sysPathMarker = "Python sys.path:";
@@ -166,6 +182,16 @@ export function formatKicadException(error: unknown): McpTextResult {
       message: error.message,
       code: error.code,
       blocking_operation_receipt: publicOperationReceipt(error.blockingReceipt),
+    });
+  }
+
+  if (isProviderRuntimeError(error)) {
+    return formatKicadResult({
+      success: false,
+      kind: error.kind,
+      retryable: error.retryable,
+      message: sanitizeDiagnosticText(error.providerMessage),
+      ...(error.details === undefined ? {} : { details: sanitizeValue(error.details) }),
     });
   }
 

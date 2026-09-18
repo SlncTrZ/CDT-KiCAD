@@ -138,6 +138,20 @@ export class OperationReceiptStore {
     return this.receipts.get(operationId);
   }
 
+  /**
+   * Remove a semantic receipt only while it is still waiting for bridge dispatch.
+   * Callers use this for bounded-queue refusal/expiry, where no backend side effect
+   * could have started and retrying the same operation_id is therefore safe.
+   */
+  public abandonBeforeDispatch(operationId: string): void {
+    const receipt = this.receipts.get(operationId);
+    if (!receipt) return;
+    if (receipt.state !== undefined) {
+      throw new Error(`Cannot abandon terminal operation_id: ${operationId}`);
+    }
+    this.receipts.delete(operationId);
+  }
+
   public firstUncertain(excludeOperationId?: string): OperationReceipt | undefined {
     for (const receipt of this.receipts.values()) {
       if (receipt.state === "uncertain" && receipt.operation_id !== excludeOperationId) {

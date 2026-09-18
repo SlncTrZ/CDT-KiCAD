@@ -819,11 +819,12 @@ MCP_TRANSPORT=both node dist/index.js --port 3100 --host 127.0.0.1
 ```
 
 - `POST /mcp` — Streamable HTTP endpoint (`Authorization: Bearer` or `X-API-Key`).
-- `GET /healthz` — unauthenticated liveness for Docker/orchestrators.
+- `GET /healthz` — unauthenticated process liveness only; it is not backend readiness.
 - Call `help` first: versions, `contract_hash`, capabilities, full usage guide.
-- Deploy Windows-native (no Docker — KiCAD is Windows-bound): service via
-  NSSM/Task Scheduler + `scripts\check-health.ps1`; gateway wiring: see
-  [`docs/SLNCTRZ_INTEGRATION.md`](docs/SLNCTRZ_INTEGRATION.md).
+- Deploy Windows-native (no Docker — KiCAD is Windows-bound) with the built-in
+  Task Scheduler lifecycle in `scripts\windows-service.ps1`. Native acceptance
+  and restart/reconnect evidence: [`docs/WINDOWS_NATIVE_ACCEPTANCE.md`](docs/WINDOWS_NATIVE_ACCEPTANCE.md);
+  gateway wiring: [`docs/SLNCTRZ_INTEGRATION.md`](docs/SLNCTRZ_INTEGRATION.md).
 
 ## Prerequisites
 

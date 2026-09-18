@@ -28,6 +28,25 @@ describe("operation receipts", () => {
     expect(receipts.get("op-semantic-1")?.state).toBeUndefined();
   });
 
+  it("allows the same operation_id after a pre-dispatch receipt is abandoned", () => {
+    const receipts = new OperationReceiptStore();
+    expect(
+      receipts.begin("op-queued", "move_component", {
+        reference: "R1",
+        position: { x: 1, y: 2, unit: "mm" },
+      }).kind,
+    ).toBe("new");
+
+    receipts.abandonBeforeDispatch("op-queued");
+
+    expect(
+      receipts.begin("op-queued", "move_component", {
+        reference: "R1",
+        position: { x: 1, y: 2, unit: "mm" },
+      }).kind,
+    ).toBe("new");
+  });
+
   it("rejects reuse of an operation_id with different semantics", () => {
     const receipts = new OperationReceiptStore();
     receipts.begin("op-1", "move_component", {
