@@ -87,8 +87,12 @@ export function registerExportTools(server: McpServer, callKicadScript: CommandF
         .enum(["A4", "A3", "A2", "A1", "A0", "Letter", "Legal", "Tabloid"])
         .optional()
         .describe("Page size"),
+      operationId: z
+        .string()
+        .optional()
+        .describe("Stable semantic operation ID for timeout-safe retry/reconciliation"),
     },
-    async ({ outputPath, layers, blackAndWhite, frameReference, pageSize }) => {
+    async ({ outputPath, layers, blackAndWhite, frameReference, pageSize, operationId }) => {
       logger.debug(`Exporting PDF to: ${outputPath}`);
       const result = await callKicadScript("export_pdf", {
         outputPath,
@@ -96,6 +100,7 @@ export function registerExportTools(server: McpServer, callKicadScript: CommandF
         blackAndWhite,
         frameReference,
         pageSize,
+        operationId,
       });
 
       return {

@@ -83,7 +83,7 @@ describe("runtime capability truth", () => {
     expect(cap(map, "common.undo")).toMatchObject({
       implemented: false,
       available_now: false,
-      reason: "no_unified_undo_use_snapshot_project",
+      reason: "no_unified_undo_use_restore_checkpoint",
     });
   });
 });

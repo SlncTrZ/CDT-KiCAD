@@ -56,14 +56,19 @@ never fake success:
 - `common.object.{list,get,count}` — supported (board/component/schematic queries).
 - `common.organization.list` — supported (layers, net classes).
 - `common.transform.{move,rotate}` — supported for board components (native).
-- `common.transaction.*`, `common.undo`, `common.redo` — UNSUPPORTED
-  (`reason: file_write_no_atomic_transaction`; use `snapshot_project` checkpoints).
-- `common.import_asset` / `common.export_asset` — supported (import*\*/export*\*).
+- `common.transaction.*`, `common.undo`, `common.redo` — UNSUPPORTED as
+  native atomic/undo operations. Recovery is explicit: create `snapshot_project`,
+  then use `restore_checkpoint`; this does not turn ordinary mutations into a
+  globally atomic transaction.
+- `common.import_asset` / `common.export_asset` — supported (import_*/export_*).
 - `common.validate.*` / `common.inspect` / `common.measure` — supported
   (`validate_*`, `run_drc`, `run_erc`, extents/clearance queries).
 - `kicad.schematic.*`, `kicad.board.*`, `kicad.routing.*`, `kicad.library.*`,
   `kicad.export.*`, `kicad.drc.*`, `kicad.parts.*` — provider extensions,
   permanently KiCAD-specific (never promoted to common unilaterally).
+- `kicad.recovery.checkpoint` — supported in snapshot mode. A restore may report
+  `checkpointed_atomic=true` only after manifest/hash validation, file restore,
+  board reopen, and semantic read-back all succeed.
 
 Runtime capability entries distinguish static implementation from current
 availability: `implemented` says the provider has the operation;
@@ -93,15 +98,29 @@ IPC. See `get_backend_state`.
 1. Validate inputs before side effects; undeclared fields are rejected at every declared object boundary by strict MCP schemas.
 2. Writes document persistence: `save_*` overwrites files; `delete_*` /
    `clear_board_outline` are destructive and separated from ordinary edits.
-3. Long autoroute/export jobs have bounded timeouts; a timeout is NOT proof
-   of cancellation — re-query state (`is_dirty`, DRC) before retrying.
-4. Caller filesystem paths are canonicalized before dispatch; `..`, absolute
+3. A timeout is NOT proof of cancellation/failure. For representative
+   timeout-recoverable mutations (`move_component`, `set_board_size`,
+   `save_project`, `export_pdf`), provide a stable `operationId`; receipts
+   expose canonical `operation_id` with `committed | failed | uncertain`.
+   Timeout marks the operation `uncertain`; a same-ID retry is not executed
+   again, and dependent mutations are blocked until reconciliation resolves the receipt.
+4. Reconciliation is operation-specific, not global idempotency. Component
+   position/layer/rotation, board extents, persisted save identity/hash, and
+   exported PDF artifact identity/hash are read back. Other timed-out mutations
+   remain `uncertain`; do not mint a new operation ID and blindly retry them.
+5. Recovery checkpoints contain `checkpoint_id`, scope, source identity/revision
+   where available, and SHA-256/size for every included resource. Prompt/session
+   logs and nested snapshots are excluded by default.
+6. `restore_checkpoint` validates the checkpoint before mutation, restores only
+   the source-bound project, reopens the board, then compares deterministic
+   semantic state. Only that verified path may return `checkpointed_atomic=true`.
+7. Caller filesystem paths are canonicalized before dispatch; `..`, absolute
    escape, symlink/junction escape, drive/case mismatch and sibling-prefix tricks
    are rejected. Project reads/writes stay under the active project root.
    Open/create and library/import/export operations may additionally use roots
    explicitly trusted by the operator via `KICAD_MCP_TRUSTED_ROOTS` (OS path-list
    separator). Temporary staging is limited to the system temp workspace.
-5. Engineering interpretation (standards compliance, TCVN/QCVN, Audit Reports)
+8. Engineering interpretation (standards compliance, TCVN/QCVN, Audit Reports)
    belongs to CDT_Engineer Production Domains — this provider reports ECAD
    facts (geometry, nets, violations, measurements) only.
 

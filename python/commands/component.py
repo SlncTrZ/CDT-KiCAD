@@ -184,6 +184,10 @@ class ComponentCommands(PlacementOptimizerCommands):
             position = params.get("position")
             rotation = params.get("rotation")
             layer = params.get("layer")
+            # Semantic operation identity is enforced by the Node receipt bridge.
+            # Read the compatibility field here so direct JSON-RPC schemas stay
+            # aligned without duplicating receipt/backend-owner state in Python.
+            _operation_id = params.get("operationId", params.get("operation_id"))
 
             if not reference or not position:
                 return {

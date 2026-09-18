@@ -56,27 +56,27 @@ export const CAPABILITIES: Record<string, CapabilityEntry> = {
   "common.transaction.begin": {
     supported: false,
     mode: "unsupported",
-    reason: "file_write_no_atomic_transaction",
+    reason: "no_native_atomic_transaction_verified_checkpoint_recovery_only",
   },
   "common.transaction.commit": {
     supported: false,
     mode: "unsupported",
-    reason: "file_write_no_atomic_transaction",
+    reason: "no_native_atomic_transaction_verified_checkpoint_recovery_only",
   },
   "common.transaction.rollback": {
     supported: false,
     mode: "unsupported",
-    reason: "file_write_no_atomic_transaction",
+    reason: "no_native_atomic_transaction_verified_checkpoint_recovery_only",
   },
   "common.undo": {
     supported: false,
     mode: "unsupported",
-    reason: "no_unified_undo_use_snapshot_project",
+    reason: "no_unified_undo_use_restore_checkpoint",
   },
   "common.redo": {
     supported: false,
     mode: "unsupported",
-    reason: "no_unified_undo_use_snapshot_project",
+    reason: "no_unified_undo_use_restore_checkpoint",
   },
   "common.import_asset": { supported: true, mode: "native" },
   "common.export_asset": { supported: true, mode: "native" },
@@ -90,6 +90,11 @@ export const CAPABILITIES: Record<string, CapabilityEntry> = {
   "kicad.export.fabrication": { supported: true, mode: "native" },
   "kicad.drc.erc": { supported: true, mode: "native" },
   "kicad.parts.sourcing": { supported: true, mode: "native" },
+  "kicad.recovery.checkpoint": {
+    supported: true,
+    mode: "snapshot",
+    reason: "checkpointed_atomic_only_after_hash_restore_reopen_semantic_verification",
+  },
 };
 
 export const ERROR_KINDS = [

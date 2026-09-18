@@ -33,6 +33,7 @@ FILESYSTEM_PATH_KEYS = frozenset(
         "footprintPath",
         "modelPath",
         "projectPath",
+        "checkpointPath",
         "libraryDir",
         "searchPath",
         "searchPaths",

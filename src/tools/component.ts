@@ -94,8 +94,12 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
         .string()
         .optional()
         .describe("Optional target layer (e.g., 'F.Cu', 'B.Cu') - flips component if needed"),
+      operationId: z
+        .string()
+        .optional()
+        .describe("Stable semantic operation ID for timeout-safe retry/reconciliation"),
     },
-    async ({ reference, position, rotation, layer }) => {
+    async ({ reference, position, rotation, layer, operationId }) => {
       logger.debug(
         `Moving component: ${reference} to ${position.x},${position.y} ${position.unit}`,
       );
@@ -104,6 +108,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
         position,
         rotation,
         layer,
+        operationId,
       });
 
       return {

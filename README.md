@@ -45,8 +45,8 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standa
 
 **Key Capabilities:**
 
-- 238 tools registered, 178 of them indexed for keyword discovery
-- 178 tools across 16 categories with JSON Schema validation
+- 239 tools registered, 179 of them indexed for keyword discovery
+- 179 tools across 16 categories with JSON Schema validation
 - Keyword tool discovery via `search_tools` / `get_category_tools`
 - 23 dynamic resources exposing project state
 - Complete schematic workflow with 65 tools (authoring, batch edits, hierarchy, layout) and dynamic symbol loading (~10,000 symbols)
@@ -364,8 +364,9 @@ cable adapters) is now supported:
 ### Developer Mode
 
 Set `KICAD_MCP_DEV=1` in your Claude Desktop MCP environment to automatically save
-the MCP session log into the project's `logs/` folder on every `export_gerber` and
-`snapshot_project` call. Useful for debugging and for attaching to GitHub issues.
+the MCP session log into the project's `logs/` folder on `export_gerber` calls.
+Recovery checkpoints intentionally exclude `logs/` and prompt/session traces by default.
+Useful for debugging and for attaching export logs to GitHub issues.
 
 ```json
 "env": {
@@ -494,9 +495,9 @@ Every tool is registered individually, so an MCP client can call any of them by
 name. On top of that, most tools are indexed so an assistant can find one by
 keyword instead of guessing:
 
-- **32 essential tools** that `search_tools` surfaces first, covering the
+- **38 essential tools** that `search_tools` surfaces first, covering the
   operations nearly every session needs
-- **178 tools indexed across 16 categories** (board, component, export, drc,
+- **179 tools indexed across 16 categories** (board, component, export, drc,
   schematic, library, symbol_library, symbol_pins, schematic_hierarchy,
   schematic_layout, schematic_batch, routing, autoroute, validation,
   parts-registry, digikey)
@@ -575,13 +576,13 @@ Access project state without executing tools:
 
 ## Available Tools
 
-The server exposes every tool directly, so your assistant can call any of them without a discovery step -- just ask for what you want to accomplish. **178 tools** are additionally indexed into 16 functional categories, so `search_tools` and `get_category_tools` can find one by keyword. Three of them (`help`, `system_status`, `system_capabilities`) are the read-only SlncTrZ provider contract — always visible, never mutating.
+The server exposes every tool directly, so your assistant can call any of them without a discovery step -- just ask for what you want to accomplish. **179 tools** are additionally indexed into 16 functional categories, so `search_tools` and `get_category_tools` can find one by keyword. Three of them (`help`, `system_status`, `system_capabilities`) are the read-only SlncTrZ provider contract — always visible, never mutating.
 
 The lists below are a curated tour of the most useful tools, not the full set.
-For the complete, generated reference of all 238 tools -- including how each one
+For the complete, generated reference of all 239 tools -- including how each one
 is discovered -- see [Tool Inventory](docs/TOOL_INVENTORY.md).
 
-### Project Management (12 tools)
+### Project Management (13 tools)
 
 - `create_project` - Initialize new KiCAD projects
 - `open_project` - Load existing project files
@@ -590,7 +591,8 @@ is discovered -- see [Tool Inventory](docs/TOOL_INVENTORY.md).
 - `close_project` - Save (optionally) and drop in-memory state
 - `is_dirty` / `discard_or_reload` - Check for and undo unsaved changes
 - `get_project_info` - Retrieve project metadata
-- `snapshot_project` - Save named checkpoint snapshot
+- `snapshot_project` - Create a hashed recovery checkpoint manifest (logs excluded by default)
+- `restore_checkpoint` - Validate hashes, restore, reopen, and semantically verify before reporting `checkpointed_atomic=true`
 
 ### Board Operations (19 tools)
 
@@ -1554,8 +1556,8 @@ How many Basic parts are available?
 
 - **JSON-RPC 2.0 Transport:** Bi-directional communication via STDIO
 - **Protocol Version:** MCP 2025-06-18
-- **Capabilities:** Tools (233), Resources (23)
-- **Tool discovery:** keyword search catalogue indexing 178 tools in 16 categories
+- **Capabilities:** Tools (239), Resources (23)
+- **Tool discovery:** keyword search catalogue indexing 179 tools in 16 categories
 - **Error Handling:** Standard JSON-RPC error codes
 
 ### TypeScript Server (`src/`)

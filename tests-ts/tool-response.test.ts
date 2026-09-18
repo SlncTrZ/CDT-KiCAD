@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
+  OperationBlockedError,
+  OperationReceiptStore,
+  OperationUncertainError,
+} from "../src/operation-receipts.js";
+import {
   canonicalizeKicadFailure,
+  formatKicadException,
   formatKicadResult,
 } from "../src/tools/tool-response.js";
 
@@ -44,6 +50,49 @@ describe("formatKicadResult", () => {
     const response = formatKicadResult(null);
     expect(response.content[0].type).toBe("text");
     expect(response.isError).toBeUndefined();
+  });
+
+  it("preserves uncertain operation receipts as a typed timeout error", () => {
+    const store = new OperationReceiptStore();
+    store.begin("op-timeout", "move_component", { reference: "R1" });
+    const receipt = store.markUncertain("op-timeout", "ipc");
+
+    const response = formatKicadException(new OperationUncertainError(receipt));
+    const payload = JSON.parse(response.content[0].text);
+
+    expect(response.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      kind: "timeout",
+      retryable: false,
+      code: "operation_uncertain",
+      operation_receipt: {
+        operation_id: "op-timeout",
+        state: "uncertain",
+        backend_owner: "ipc",
+      },
+    });
+  });
+
+  it("preserves the blocking receipt for dependent mutations", () => {
+    const store = new OperationReceiptStore();
+    store.begin("op-blocker", "move_component", { reference: "R1" });
+    const receipt = store.markUncertain("op-blocker", "degraded_uncertain");
+
+    const response = formatKicadException(new OperationBlockedError(receipt));
+    const payload = JSON.parse(response.content[0].text);
+
+    expect(response.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      kind: "conflict",
+      retryable: false,
+      code: "operation_blocked_by_uncertain_predecessor",
+      blocking_operation_receipt: {
+        operation_id: "op-blocker",
+        state: "uncertain",
+      },
+    });
   });
 
   it("sanitizes Python sys.path and nested diagnostic details", () => {

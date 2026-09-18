@@ -31,13 +31,18 @@ export function registerBoardTools(server: McpServer, callKicadScript: CommandFu
       width: z.number().describe("Board width"),
       height: z.number().describe("Board height"),
       unit: z.enum(["mm", "mil", "inch"]).describe("Unit of measurement"),
+      operationId: z
+        .string()
+        .optional()
+        .describe("Stable semantic operation ID for timeout-safe retry/reconciliation"),
     },
-    async ({ width, height, unit }) => {
+    async ({ width, height, unit, operationId }) => {
       logger.debug(`Setting board size to ${width}x${height} ${unit}`);
       const result = await callKicadScript("set_board_size", {
         width,
         height,
         unit,
+        operationId,
       });
 
       return {

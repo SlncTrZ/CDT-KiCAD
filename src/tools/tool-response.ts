@@ -1,3 +1,8 @@
+import {
+  OperationBlockedError,
+  type OperationReceipt,
+  OperationUncertainError,
+} from "../operation-receipts.js";
 import { ERROR_KINDS } from "../provider-contract.js";
 
 export type McpTextResult = {
@@ -127,9 +132,41 @@ export function ensureKicadSuccess<T>(result: T): T {
   return result;
 }
 
+function publicOperationReceipt(receipt: OperationReceipt): Record<string, unknown> {
+  return {
+    operation_id: receipt.operation_id,
+    command: receipt.command,
+    state: receipt.state,
+    ...(receipt.backend_owner ? { backend_owner: receipt.backend_owner } : {}),
+    ...(receipt.reconciliation ? { reconciliation: receipt.reconciliation } : {}),
+  };
+}
+
 export function formatKicadException(error: unknown): McpTextResult {
   if (error instanceof KicadBackendError) {
     return formatKicadResult(error.failure);
+  }
+
+  if (error instanceof OperationUncertainError) {
+    return formatKicadResult({
+      success: false,
+      kind: "timeout",
+      retryable: false,
+      message: error.message,
+      code: error.code,
+      operation_receipt: publicOperationReceipt(error.receipt),
+    });
+  }
+
+  if (error instanceof OperationBlockedError) {
+    return formatKicadResult({
+      success: false,
+      kind: "conflict",
+      retryable: false,
+      message: error.message,
+      code: error.code,
+      blocking_operation_receipt: publicOperationReceipt(error.blockingReceipt),
+    });
   }
 
   const message = sanitizeDiagnosticText(error instanceof Error ? error.message : String(error));

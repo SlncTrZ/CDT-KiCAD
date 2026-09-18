@@ -128,6 +128,31 @@ def test_valid_project_path_is_canonicalized_and_allowed(tmp_path: Path) -> None
     assert result["path"] == str((project / "board.kicad_pcb").resolve())
 
 
+def test_restore_checkpoint_path_stays_within_active_project(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    project = workspace / "project"
+    outside = workspace / "outside"
+    checkpoint = project / "snapshots" / "cp-001"
+    checkpoint.mkdir(parents=True)
+    outside.mkdir(parents=True)
+
+    result = _validate(
+        "restore_checkpoint",
+        {"checkpointPath": str(checkpoint)},
+        project_root=project,
+        cwd=workspace,
+    )
+    assert result["checkpointPath"] == str(checkpoint.resolve())
+
+    with pytest.raises(PathPolicyError, match="checkpointPath is outside allowed roots"):
+        _validate(
+            "restore_checkpoint",
+            {"checkpointPath": str(outside / "cp-escape")},
+            project_root=project,
+            cwd=workspace,
+        )
+
+
 def test_explicit_trusted_import_export_roots_still_work(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     project = workspace / "project"

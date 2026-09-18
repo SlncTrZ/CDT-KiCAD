@@ -6,12 +6,22 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import express from "express";
 import { spawn, exec, execSync, ChildProcess } from "child_process";
+import { randomUUID } from "crypto";
 import { existsSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { logger } from "./logger.js";
 import { computeCommandTimeout, DEFAULT_COMMAND_TIMEOUT_MS } from "./command-timeout.js";
 import { PROVIDER_ID, PROVIDER_VERSION } from "./provider-contract.js";
 import { createContractToolTarget } from "./tool-contract-boundary.js";
+import {
+  commandMayMutate,
+  decorateWithReceipt,
+  hasAutomaticReconciliation,
+  OperationBlockedError,
+  OperationReceiptStore,
+  OperationUncertainError,
+  splitOperationId,
+} from "./operation-receipts.js";
 import { ensureKicadSuccess } from "./tools/tool-response.js";
 
 // Import tool registration functions
@@ -239,6 +249,9 @@ export class KiCADMcpServer {
       params: any;
       timeout: number;
       requestId: number;
+      operationId?: string;
+      mutating?: boolean;
+      reconciliationFor?: string;
     };
     resolve: Function;
     reject: Function;
@@ -252,7 +265,17 @@ export class KiCADMcpServer {
     resolve: Function;
     reject: Function;
     timeoutHandle: NodeJS.Timeout;
+    command?: string;
+    params?: Record<string, unknown>;
+    operationId?: string;
+    mutating?: boolean;
+    reconciliationFor?: string;
+    timedOut?: boolean;
   } | null = null;
+
+  /** Semantic operation receipts survive bridge correlation timeouts/retries. */
+  private readonly operationReceipts = new OperationReceiptStore();
+  private readonly lateOperationResults = new Map<string, any>();
 
   /** Resolved when Python prints {"type":"ready"} — stdin loop is live. */
   private readyPromise: Promise<void>;
@@ -802,38 +825,118 @@ export class KiCADMcpServer {
    * @param params The parameters for the command
    * @returns The result of the command execution
    */
-  private async callKicadScript(command: string, params: any): Promise<any> {
+  private async callKicadScript(command: string, rawParams: any): Promise<any> {
     return new Promise((resolve, reject) => {
-      // Check if Python process is running
       if (!this.pythonProcess) {
         logger.error("Python process is not running");
         reject(new Error("Python process for KiCAD scripting is not running"));
         return;
       }
 
-      // Determine timeout based on command type (see src/command-timeout.ts).
+      let operationId: string | undefined;
+      let params: Record<string, unknown>;
+      try {
+        const split = splitOperationId(rawParams);
+        operationId = split.operationId;
+        params = split.params;
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      const mutating = commandMayMutate(command);
+      if (mutating) {
+        operationId = operationId ?? randomUUID();
+        const existing = this.operationReceipts.get(operationId);
+        if (existing) {
+          let begun;
+          try {
+            begun = this.operationReceipts.begin(operationId, command, params);
+          } catch (error) {
+            reject(error);
+            return;
+          }
+
+          if (begun.kind === "committed" || begun.kind === "failed") {
+            resolve(decorateWithReceipt(begun.receipt.result, begun.receipt));
+            return;
+          }
+          if (begun.kind === "uncertain") {
+            reject(new OperationUncertainError(begun.receipt));
+            return;
+          }
+          reject(new Error(`operation_id=${operationId} is already in flight`));
+          return;
+        }
+
+        const blocker = this.operationReceipts.firstUncertain();
+        if (blocker) {
+          reject(new OperationBlockedError(blocker));
+          return;
+        }
+
+        try {
+          this.operationReceipts.begin(operationId, command, params);
+        } catch (error) {
+          reject(error);
+          return;
+        }
+      }
+
       const commandTimeout = computeCommandTimeout(command, params);
       if (commandTimeout !== DEFAULT_COMMAND_TIMEOUT_MS) {
         logger.info(`Using extended timeout (${commandTimeout / 1000}s) for command: ${command}`);
       }
 
-      // Add request to queue with timeout info
       this.requestQueue.push({
         request: {
           command,
           params,
           timeout: commandTimeout,
           requestId: this.allocateInternalRequestId(),
+          operationId,
+          mutating,
         },
         resolve,
         reject,
       });
 
-      // Process the queue if not already processing
       if (!this.processingRequest) {
         this.processNextRequest();
       }
     });
+  }
+
+  private enqueueReconciliation(
+    operationId: string,
+    command: string,
+    params: Record<string, unknown>,
+    lateResult: any,
+  ): void {
+    this.lateOperationResults.set(operationId, lateResult);
+    this.requestQueue.unshift({
+      request: {
+        command: "_reconcile_operation",
+        params: {
+          operation_id: operationId,
+          command,
+          params,
+          late_result: lateResult,
+        },
+        timeout: DEFAULT_COMMAND_TIMEOUT_MS,
+        requestId: this.allocateInternalRequestId(),
+        mutating: false,
+        reconciliationFor: operationId,
+      },
+      resolve: () => undefined,
+      reject: () => undefined,
+    });
+  }
+
+  private static backendOwner(result: any): string | undefined {
+    if (!result || typeof result !== "object") return undefined;
+    const owner = result.backend_owner ?? result._backend ?? result.backend;
+    return typeof owner === "string" ? owner : undefined;
   }
 
   /**
@@ -912,7 +1015,63 @@ export class KiCADMcpServer {
       clearTimeout(handler.timeoutHandle);
       this.currentRequestHandler = null;
       this.processingRequest = false;
-      handler.resolve(result);
+
+      if (handler.reconciliationFor) {
+        const operationId = handler.reconciliationFor;
+        const lateResult = this.lateOperationResults.get(operationId);
+        const backendOwner =
+          KiCADMcpServer.backendOwner(result) ?? KiCADMcpServer.backendOwner(lateResult);
+        if (result?.success && result?.state === "committed") {
+          this.operationReceipts.markCommitted(operationId, lateResult, backendOwner, {
+            strategy: "read_after_write",
+            evidence: result.evidence,
+          });
+          this.lateOperationResults.delete(operationId);
+        } else if (result?.state === "failed") {
+          this.operationReceipts.markFailed(operationId, lateResult ?? result, backendOwner, {
+            strategy: "read_after_write",
+            evidence: result.evidence,
+          });
+          this.lateOperationResults.delete(operationId);
+        } else {
+          this.operationReceipts.markUncertain(operationId, backendOwner);
+        }
+        handler.resolve(result);
+        setTimeout(() => this.processNextRequest(), 0);
+        return;
+      }
+
+      if (handler.timedOut) {
+        if (handler.operationId) {
+          const backendOwner = KiCADMcpServer.backendOwner(result);
+          if (result?.success === false) {
+            this.operationReceipts.markFailed(handler.operationId, result, backendOwner);
+          } else if (handler.command && hasAutomaticReconciliation(handler.command)) {
+            this.enqueueReconciliation(
+              handler.operationId,
+              handler.command,
+              handler.params ?? {},
+              result,
+            );
+          } else {
+            this.operationReceipts.markUncertain(handler.operationId, backendOwner);
+          }
+        }
+        setTimeout(() => this.processNextRequest(), 0);
+        return;
+      }
+
+      let deliveredResult = result;
+      if (handler.operationId) {
+        const backendOwner = KiCADMcpServer.backendOwner(result);
+        const receipt =
+          result?.success === false
+            ? this.operationReceipts.markFailed(handler.operationId, result, backendOwner)
+            : this.operationReceipts.markCommitted(handler.operationId, result, backendOwner);
+        deliveredResult = decorateWithReceipt(result, receipt);
+      }
+
+      handler.resolve(deliveredResult);
       setTimeout(() => this.processNextRequest(), 0);
       return;
     }
@@ -939,17 +1098,33 @@ export class KiCADMcpServer {
       return;
     }
 
-    // Set processing flag
+    const queued = this.requestQueue[0];
+    if (queued.request.mutating && !queued.request.reconciliationFor) {
+      const blocker = this.operationReceipts.firstUncertain(queued.request.operationId);
+      if (blocker) {
+        this.requestQueue.shift();
+        queued.reject(new OperationBlockedError(blocker));
+        setTimeout(() => this.processNextRequest(), 0);
+        return;
+      }
+    }
+
     this.processingRequest = true;
 
-    // Get the next request
     const { request, resolve, reject } = this.requestQueue.shift()!;
 
     try {
       logger.debug(`Processing KiCAD command: ${request.command}`);
 
-      // Format the command and parameters as JSON
-      const requestStr = JSON.stringify(request);
+      // Bridge correlation and semantic operation identity are distinct:
+      // requestId is one frame; operationId survives caller timeout/retry.
+      const requestStr = JSON.stringify({
+        command: request.command,
+        params: request.params,
+        timeout: request.timeout,
+        requestId: request.requestId,
+        ...(request.operationId ? { operationId: request.operationId } : {}),
+      });
 
       // Set a timeout (use command-specific timeout or default)
       const timeoutDuration = request.timeout || 30000;
@@ -960,21 +1135,55 @@ export class KiCADMcpServer {
         logger.error(`Command timeout after ${timeoutDuration / 1000}s: ${request.command}`);
         logger.error(`Buffer contents: ${this.responseBuffer.substring(0, 200)}...`);
 
-        // Clear state. The buffer is left alone: a partial frame from the
-        // timed-out command completes on the next data chunk and is then
-        // discarded by ID, not delivered to the next request.
+        const handler = this.currentRequestHandler;
+        if (request.reconciliationFor) {
+          // Reconciliation is read-only. If it times out, the original receipt
+          // stays uncertain but the bridge itself may continue serving reads.
+          this.operationReceipts.markUncertain(
+            request.reconciliationFor,
+            "degraded_uncertain",
+          );
+          this.currentRequestHandler = null;
+          this.processingRequest = false;
+          reject(
+            new Error(
+              `Reconciliation timeout for operation_id=${request.reconciliationFor}`,
+            ),
+          );
+          setTimeout(() => this.processNextRequest(), 0);
+          return;
+        }
+
+        if (request.operationId && handler) {
+          // A caller timeout is not cancellation. Keep this exact request as
+          // the active bridge frame so its late response can be correlated and
+          // reconciled before another mutation is admitted.
+          const receipt = this.operationReceipts.markUncertain(
+            request.operationId,
+            "degraded_uncertain",
+          );
+          handler.timedOut = true;
+          reject(new OperationUncertainError(receipt));
+          return;
+        }
+
         this.currentRequestHandler = null;
         this.processingRequest = false;
-
-        // Reject the promise
         reject(new Error(`Command timeout after ${timeoutDuration / 1000}s: ${request.command}`));
-
-        // Process next request
         setTimeout(() => this.processNextRequest(), 0);
       }, timeoutDuration);
 
-      // Store the current request handler
-      this.currentRequestHandler = { requestId: request.requestId, resolve, reject, timeoutHandle };
+      this.currentRequestHandler = {
+        requestId: request.requestId,
+        resolve,
+        reject,
+        timeoutHandle,
+        command: request.command,
+        params: request.params,
+        operationId: request.operationId,
+        mutating: request.mutating,
+        reconciliationFor: request.reconciliationFor,
+      };
 
       // Write the request to the Python process
       logger.debug(`Sending request: ${requestStr}`);
