@@ -36,6 +36,7 @@ if sys.platform == "win32":
 
 import sexpdata
 from annotations import AnnotationLoader
+from error_contract import normalize_failure_response
 from commands.schematic_handlers import SchematicHandlersMixin
 from commands.wire_manager import WireManager
 from resources.resource_definitions import RESOURCE_DEFINITIONS, handle_resource_read
@@ -1006,7 +1007,12 @@ class KiCADInterface(SchematicHandlersMixin):
         return result.get("_backend", "swig")
 
     def handle_command(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Route command to appropriate handler, preferring IPC when available"""
+        """Route a command and enforce the canonical outward error contract."""
+        result = self._handle_command_raw(command, params)
+        return normalize_failure_response(result, command=command)
+
+    def _handle_command_raw(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Route command to appropriate handler, preferring IPC when available."""
         logger.info(f"Handling command: {command}")
         logger.debug(f"Command parameters: {params}")
 

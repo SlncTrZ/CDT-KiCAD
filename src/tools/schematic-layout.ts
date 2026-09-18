@@ -6,6 +6,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 
 export function registerSchematicLayoutTools(server: McpServer, callKicadScript: Function) {
   // Move a single Reference/Value field
@@ -46,7 +47,7 @@ export function registerSchematicLayoutTools(server: McpServer, callKicadScript:
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       updates: z
         .array(
-          z.object({
+          strictObject({
             reference: z.string(),
             property: z.enum(["Reference", "Value"]),
             x: z.number(),

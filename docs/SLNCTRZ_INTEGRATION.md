@@ -39,7 +39,7 @@ name; discovery never gates execution.
 
 After `help`, pin `contract_hash` (SHA-256 over `docs/TOOL_GUIDE.md`).
 Re-fetch `help` when the hash changes; treat a changed hash as a new
-contract version (`cdt-kicad-contract-v1` → next).
+contract version (`cdt-kicad-contract-v2` → next).
 
 ## Refusals the gateway must expect
 

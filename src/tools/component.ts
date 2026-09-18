@@ -4,6 +4,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 import { logger } from "../logger.js";
 
 // Command function type for KiCAD script calls
@@ -33,7 +34,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x: z.number().describe("X coordinate"),
           y: z.number().describe("Y coordinate"),
           unit: z.enum(["mm", "inch", "mil"]).describe("Unit of measurement"),
-        })
+        }).strict()
         .describe("Position coordinates and unit"),
       reference: z.string().optional().describe("Optional desired reference (e.g., 'R5')"),
       value: z.string().optional().describe("Optional component value (e.g., '10k')"),
@@ -86,7 +87,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x: z.number().describe("X coordinate"),
           y: z.number().describe("Y coordinate"),
           unit: z.enum(["mm", "inch", "mil"]).describe("Unit of measurement"),
-        })
+        }).strict()
         .describe("New position coordinates and unit"),
       rotation: z.number().optional().describe("Optional new rotation in degrees"),
       layer: z
@@ -123,7 +124,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
       moves: z
         .record(
           z.string(),
-          z.object({
+          strictObject({
             x: z.number().optional(),
             y: z.number().optional(),
             unit: z.enum(["mm", "inch", "mil"]).optional(),
@@ -132,7 +133,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
                 x: z.number(),
                 y: z.number(),
                 unit: z.enum(["mm", "inch", "mil"]).optional(),
-              })
+              }).strict()
               .optional(),
             rotation: z.number().optional(),
             rot: z.number().optional(),
@@ -529,7 +530,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x2: z.number(),
           y2: z.number(),
           unit: z.enum(["mm", "inch", "mil"]).optional(),
-        })
+        }).strict()
         .optional()
         .describe("Filter by bounding box region"),
       unit: z.enum(["mm", "mil", "inch"]).optional().describe("Unit for coordinates (default: mm)"),
@@ -659,7 +660,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x: z.number(),
           y: z.number(),
           unit: z.enum(["mm", "inch", "mil"]),
-        })
+        }).strict()
         .describe("Starting position"),
       rows: z.number().describe("Number of rows"),
       columns: z.number().describe("Number of columns"),
@@ -781,7 +782,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x2: z.number(),
           y2: z.number(),
           unit: z.enum(["mm", "inch"]).optional(),
-        })
+        }).strict()
         .optional()
         .describe("Optional board outline bbox override. Default: derived from Edge.Cuts."),
     },
@@ -878,7 +879,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x2: z.number(),
           y2: z.number(),
           unit: z.enum(["mm", "mil", "inch"]).optional(),
-        })
+        }).strict()
         .optional()
         .describe(
           "SCOPED REGROUP: confine movable parts to this box (mm) — e.g. the area beside one IC. Combine with `refs` (that IC's passives) to regroup one cluster at a time; unlisted parts stay as anchors. Far more reliable than a whole-board run on a dense board. Default: whole board.",
@@ -890,7 +891,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x2: z.number(),
           y2: z.number(),
           unit: z.enum(["mm", "mil", "inch"]).optional(),
-        })
+        }).strict()
         .optional()
         .describe("Optional board containment bbox override. Default: derived from Edge.Cuts."),
     },
@@ -921,7 +922,7 @@ export function registerComponentTools(server: McpServer, callKicadScript: Comma
           x: z.number(),
           y: z.number(),
           unit: z.enum(["mm", "inch", "mil"]).optional(),
-        })
+        }).strict()
         .describe("Offset from original position"),
       newReference: z.string().optional().describe("New reference designator"),
       count: z.number().optional().describe("Number of duplicates (default: 1)"),

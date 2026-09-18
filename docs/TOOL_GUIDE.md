@@ -70,7 +70,7 @@ is active. See `get_backend_state`.
 
 ## Safety rules every client must respect
 
-1. Validate inputs before side effects; unknown fields are rejected.
+1. Validate inputs before side effects; undeclared fields are rejected at every declared object boundary by strict MCP schemas.
 2. Writes document persistence: `save_*` overwrites files; `delete_*` /
    `clear_board_outline` are destructive and separated from ordinary edits.
 3. Long autoroute/export jobs have bounded timeouts; a timeout is NOT proof
@@ -82,15 +82,20 @@ is active. See `get_backend_state`.
 
 ## Error vocabulary
 
+Provider/backend execution failures use a JSON text payload with `success: false`,
+canonical `kind`, `message`, `retryable`, and optional sanitized `details`:
 `authentication_error | authorization_error | validation_error | not_found |
 conflict | rate_limited | timeout | provider_unavailable | internal_error |
-unsupported_capability`. Errors never include credentials, tokens, or stack
-traces. Each error states whether retry is reasonable.
+unsupported_capability`. These outward failures never include credentials,
+tokens, Python stack traces, traceback source paths, or Python `sys.path` dumps.
+MCP schema-validation failures are rejected by the SDK before handler dispatch;
+they are protocol-layer validation errors and are non-retryable, rather than a
+provider execution payload.
 
 ## Versioning
 
 - `provider_version` — this software build (semver + `-cdt.N` fork suffix).
-- `contract_version` — this help/tool contract (`cdt-kicad-contract-v1`).
+- `contract_version` — this help/tool contract (`cdt-kicad-contract-v2`).
 - `common_contract_version` — applied CDT common semantics (`cdt-common-v1`).
 - `protocol_version` — MCP protocol / SDK compatibility declaration.
 - `contract_hash` — SHA-256 over this guide's canonical content; clients and

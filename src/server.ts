@@ -11,6 +11,8 @@ import { join, dirname } from "path";
 import { logger } from "./logger.js";
 import { computeCommandTimeout, DEFAULT_COMMAND_TIMEOUT_MS } from "./command-timeout.js";
 import { PROVIDER_ID, PROVIDER_VERSION } from "./provider-contract.js";
+import { createContractToolTarget } from "./tool-contract-boundary.js";
+import { ensureKicadSuccess } from "./tools/tool-response.js";
 
 // Import tool registration functions
 import { registerHelpTools } from "./tools/help.js";
@@ -312,36 +314,40 @@ export class KiCADMcpServer {
   public registerAllOn(target: McpServer): void {
     logger.info("Registering KiCAD tools, resources, and prompts...");
 
+    const toolTarget = createContractToolTarget(target);
+    const callToolBackend = async (command: string, params: any): Promise<any> =>
+      ensureKicadSuccess(await this.callKicadScript(command, params));
+
     // SlncTrZ provider contract FIRST (help, system_status, system_capabilities)
-    registerHelpTools(target, () => this.callKicadScript("get_backend_state", {}));
+    registerHelpTools(toolTarget, () => callToolBackend("get_backend_state", {}));
 
     // Register router tools (for tool discovery and execution)
-    registerRouterTools(target, this.callKicadScript.bind(this));
+    registerRouterTools(toolTarget, callToolBackend);
 
-    // Register all tools
-    registerProjectTools(target, this.callKicadScript.bind(this));
-    registerBoardTools(target, this.callKicadScript.bind(this));
-    registerComponentTools(target, this.callKicadScript.bind(this));
-    registerRoutingTools(target, this.callKicadScript.bind(this));
-    registerDesignRuleTools(target, this.callKicadScript.bind(this));
-    registerExportTools(target, this.callKicadScript.bind(this));
-    registerSchematicTools(target, this.callKicadScript.bind(this));
-    registerLibraryTools(target, this.callKicadScript.bind(this));
-    registerSymbolLibraryTools(target, this.callKicadScript.bind(this));
-    registerSchematicHierarchyTools(target, this.callKicadScript.bind(this));
-    registerSchematicLayoutTools(target, this.callKicadScript.bind(this));
-    registerSchematicBatchTools(target, this.callKicadScript.bind(this));
-    registerJLCPCBApiTools(target, this.callKicadScript.bind(this));
-    registerDigiKeyApiTools(target, this.callKicadScript.bind(this));
-    registerPartsRegistryTools(target);
-    registerDatasheetTools(target, this.callKicadScript.bind(this));
-    registerFootprintTools(target, this.callKicadScript.bind(this));
-    registerSymbolCreatorTools(target, this.callKicadScript.bind(this));
-    registerUITools(target, this.callKicadScript.bind(this));
-    registerFreeroutingTools(target, this.callKicadScript.bind(this));
-    registerEagleTools(target, this.callKicadScript.bind(this));
-    registerPcbImportTools(target, this.callKicadScript.bind(this));
-    registerValidationTools(target, this.callKicadScript.bind(this));
+    // Register all tools through the provider-wide strict/error boundary.
+    registerProjectTools(toolTarget, callToolBackend);
+    registerBoardTools(toolTarget, callToolBackend);
+    registerComponentTools(toolTarget, callToolBackend);
+    registerRoutingTools(toolTarget, callToolBackend);
+    registerDesignRuleTools(toolTarget, callToolBackend);
+    registerExportTools(toolTarget, callToolBackend);
+    registerSchematicTools(toolTarget, callToolBackend);
+    registerLibraryTools(toolTarget, callToolBackend);
+    registerSymbolLibraryTools(toolTarget, callToolBackend);
+    registerSchematicHierarchyTools(toolTarget, callToolBackend);
+    registerSchematicLayoutTools(toolTarget, callToolBackend);
+    registerSchematicBatchTools(toolTarget, callToolBackend);
+    registerJLCPCBApiTools(toolTarget, callToolBackend);
+    registerDigiKeyApiTools(toolTarget, callToolBackend);
+    registerPartsRegistryTools(toolTarget);
+    registerDatasheetTools(toolTarget, callToolBackend);
+    registerFootprintTools(toolTarget, callToolBackend);
+    registerSymbolCreatorTools(toolTarget, callToolBackend);
+    registerUITools(toolTarget, callToolBackend);
+    registerFreeroutingTools(toolTarget, callToolBackend);
+    registerEagleTools(toolTarget, callToolBackend);
+    registerPcbImportTools(toolTarget, callToolBackend);
+    registerValidationTools(toolTarget, callToolBackend);
 
     // Register all resources
     registerProjectResources(target, this.callKicadScript.bind(this));
