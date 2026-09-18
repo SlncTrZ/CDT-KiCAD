@@ -4,6 +4,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 
 export function registerSchematicTools(server: McpServer, callKicadScript: Function) {
   // Create schematic tool
@@ -46,7 +47,7 @@ export function registerSchematicTools(server: McpServer, callKicadScript: Funct
         .object({
           x: z.number(),
           y: z.number(),
-        })
+        }).strict()
         .optional()
         .describe("Position on schematic"),
       unit: z
@@ -231,7 +232,7 @@ use edit_component instead.`,
         .describe("Rename the reference designator (e.g. R1 → R10)"),
       fieldPositions: z
         .record(
-          z.object({
+          strictObject({
             x: z.number(),
             y: z.number(),
             angle: z.number().optional().default(0),
@@ -255,7 +256,7 @@ use edit_component instead.`,
         .record(
           z.union([
             z.string(),
-            z.object({
+            strictObject({
               value: z.string().describe("Property value to write"),
               x: z.number().optional().describe("Label X position in mm (default: component X)"),
               y: z.number().optional().describe("Label Y position in mm (default: component Y)"),
@@ -948,7 +949,7 @@ edit_schematic_component and set its value to an empty string.`,
             .string()
             .optional()
             .describe("Filter by reference prefix (e.g., 'R', 'C', 'U')"),
-        })
+        }).strict()
         .optional()
         .describe("Optional filters"),
     },
@@ -1124,7 +1125,7 @@ edit_schematic_component and set its value to an empty string.`,
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       reference: z.string().describe("Reference designator (e.g., R1, U1)"),
       position: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .describe("New position in schematic mm coordinates"),
       preserveWires: z
         .boolean()
@@ -1309,8 +1310,8 @@ edit_schematic_component and set its value to an empty string.`,
     "Remove a wire from the schematic by start and end coordinates.",
     {
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
-      start: z.object({ x: z.number(), y: z.number() }).describe("Wire start position"),
-      end: z.object({ x: z.number(), y: z.number() }).describe("Wire end position"),
+      start: strictObject({ x: z.number(), y: z.number() }).describe("Wire start position"),
+      end: strictObject({ x: z.number(), y: z.number() }).describe("Wire end position"),
     },
     async (args: {
       schematicPath: string;
@@ -1348,7 +1349,7 @@ edit_schematic_component and set its value to an empty string.`,
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       netName: z.string().describe("Name of the net label to remove"),
       position: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .optional()
         .describe("Position to disambiguate if multiple labels with same name"),
     },
@@ -1387,9 +1388,9 @@ edit_schematic_component and set its value to an empty string.`,
     {
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       netName: z.string().describe("Name of the net label to move"),
-      newPosition: z.object({ x: z.number(), y: z.number() }).describe("Target position in mm"),
+      newPosition: strictObject({ x: z.number(), y: z.number() }).describe("Target position in mm"),
       currentPosition: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .optional()
         .describe("Current position to disambiguate when multiple labels share the same name"),
       labelType: z

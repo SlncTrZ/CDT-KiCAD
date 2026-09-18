@@ -156,10 +156,10 @@ export function registerDesignRuleTools(server: McpServer, callKicadScript: Comm
               x: z.number().optional(),
               y: z.number().optional(),
               unit: z.enum(["mm", "mil", "inch"]).optional(),
-            })
+            }).strict()
             .optional()
             .describe("Position to check (if ID not provided)"),
-        })
+        }).strict()
         .describe("First item to check"),
       item2: z
         .object({
@@ -173,10 +173,10 @@ export function registerDesignRuleTools(server: McpServer, callKicadScript: Comm
               x: z.number().optional(),
               y: z.number().optional(),
               unit: z.enum(["mm", "mil", "inch"]).optional(),
-            })
+            }).strict()
             .optional()
             .describe("Position to check (if ID not provided)"),
-        })
+        }).strict()
         .describe("Second item to check"),
     },
     async ({ item1, item2 }) => {

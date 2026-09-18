@@ -5,6 +5,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 
 export function registerSchematicBatchTools(server: McpServer, callKicadScript: Function) {
   // Add many components at once
@@ -15,12 +16,12 @@ export function registerSchematicBatchTools(server: McpServer, callKicadScript: 
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       components: z
         .array(
-          z.object({
+          strictObject({
             symbol: z.string().describe("'Library:SymbolName' (e.g., Device:R)"),
             reference: z.string().describe("Reference designator (e.g., R1)"),
             value: z.string().optional(),
             footprint: z.string().optional(),
-            position: z.object({ x: z.number(), y: z.number() }).optional(),
+            position: strictObject({ x: z.number(), y: z.number() }).optional(),
             rotation: z.number().optional(),
             includePins: z.boolean().optional(),
             unit: z
@@ -127,7 +128,7 @@ export function registerSchematicBatchTools(server: McpServer, callKicadScript: 
       propertyName: z.string().describe("Property name (e.g. Manufacturer, MPN)"),
       propertyValue: z.string().describe("Property value"),
       position: z
-        .object({ x: z.number(), y: z.number() })
+        .object({ x: z.number(), y: z.number() }).strict()
         .optional()
         .describe("Position {x, y} in mm (default: 0, 0)"),
       hide: z.boolean().optional().describe("Hide the property (default false)"),
@@ -197,7 +198,7 @@ export function registerSchematicBatchTools(server: McpServer, callKicadScript: 
     {
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       pins: z
-        .array(z.object({ componentRef: z.string(), pinName: z.string() }))
+        .array(strictObject({ componentRef: z.string(), pinName: z.string() }))
         .describe("Pins to mark no-connect"),
     },
     async (args: any) => {
@@ -251,12 +252,12 @@ export function registerSchematicBatchTools(server: McpServer, callKicadScript: 
       schematicPath: z.string().describe("Path to the .kicad_sch file"),
       components: z
         .array(
-          z.object({
+          strictObject({
             symbol: z.string(),
             reference: z.string(),
             value: z.string().optional(),
             footprint: z.string().optional(),
-            position: z.object({ x: z.number(), y: z.number() }).optional(),
+            position: strictObject({ x: z.number(), y: z.number() }).optional(),
             rotation: z.number().optional(),
             nets: z
               .record(z.string(), z.string())

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { formatKicadResult } from "../src/tools/tool-response.js";
+import {
+  canonicalizeKicadFailure,
+  formatKicadResult,
+} from "../src/tools/tool-response.js";
 
 describe("formatKicadResult", () => {
   it("wraps a successful object result as JSON text content", () => {
@@ -41,5 +44,24 @@ describe("formatKicadResult", () => {
     const response = formatKicadResult(null);
     expect(response.content[0].type).toBe("text");
     expect(response.isError).toBeUndefined();
+  });
+
+  it("sanitizes Python sys.path and nested diagnostic details", () => {
+    const failure = canonicalizeKicadFailure({
+      success: false,
+      kind: "internal_error",
+      message: "backend failed",
+      errorDetails:
+        "Import failed\n\nPython sys.path:\n/mnt/pc-dev/CDT-KiCAD/python\n/usr/lib/python3.12",
+      details: {
+        diagnostic:
+          'Traceback (most recent call last):\n  File "/mnt/pc-dev/CDT-KiCAD/python/kicad_interface.py", line 42\nRuntimeError: boom',
+      },
+    });
+
+    expect(failure.errorDetails).toBe("Import failed");
+    expect(failure.details).toEqual({ diagnostic: "RuntimeError: boom" });
+    expect(JSON.stringify(failure)).not.toContain("/mnt/pc-dev");
+    expect(JSON.stringify(failure)).not.toContain("Traceback");
   });
 });

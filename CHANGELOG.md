@@ -17,6 +17,12 @@ are marked `[CDT]`. See `ATTRIBUTION.md`.
   via `KICAD_MCP_TOKEN` (`X-API-Key` compatibility through one auth layer).
 - Honest capability map: transactions/undo declared unsupported (typed refusal;
   use `snapshot_project` checkpoints). No upstream ECAD logic changed.
+- [B0] Provider-wide contract boundary now rejects undeclared tool arguments at every declared object boundary,
+  converts backend/direct-tool failures to MCP `isError` results, and emits canonical
+  execution-error payloads with `kind`, `message`, `retryable`, and sanitized optional
+  `details`. Python failures are normalized centrally; outward tracebacks, traceback source
+  paths, and Python `sys.path` diagnostics are removed. Contract version is now
+  `cdt-kicad-contract-v2`.
 
 ## [Unreleased]
 
@@ -60,11 +66,11 @@ are marked `[CDT]`. See `ATTRIBUTION.md`.
   `DIGIKEY_CLIENT_ID` and `DIGIKEY_CLIENT_SECRET` in the environment, optionally
   via the already-gitignored `.env`, and are deliberately absent from every tool
   schema — a key passed as a tool argument would be recorded in the conversation,
-  in the MCP log, and in anything replaying the call. Absent from the schema means
-  such an argument is _ignored_, not rejected: the MCP layer strips unknown keys,
-  so the tools now return a `warnings` entry naming the argument and telling the
-  caller to rotate the value, which is the honest description of what happened.
-  Everything leaving the module passes through a redaction step, and a non-JSON
+  in the MCP log, and in anything replaying the call. The CDT provider boundary now
+  uses strict object schemas throughout tool inputs, so undeclared credential-shaped
+  arguments are rejected before the handler runs. The Python-side warning remains
+  defense-in-depth for legacy/direct bridge callers. Everything leaving the module
+  passes through a redaction step, and a non-JSON
   response body or a hostile `Retry-After` is converted into a redacted error
   rather than escaping as an unfiltered traceback. Tests assert all of it,
   including that the schemas contain no credential-shaped field, that `.env` is

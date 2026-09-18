@@ -21,6 +21,7 @@ import { z } from "zod";
 import { existsSync, statSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { logger } from "../logger.js";
+import { formatKicadResult } from "./tool-response.js";
 
 // ---- registry configuration --------------------------------------------- //
 
@@ -295,15 +296,12 @@ name, keywords, family, and manufacturer.`,
           ],
         };
       } catch (error: any) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to search parts registry (${apiBase()}): ${error.message || error}`,
-            },
-          ],
-          isError: true,
-        };
+        return formatKicadResult({
+          success: false,
+          kind: "provider_unavailable",
+          retryable: true,
+          message: `Failed to search parts registry (${apiBase()}): ${error.message || error}`,
+        });
       }
     },
   );
@@ -361,15 +359,12 @@ by search_parts_registry.`,
           ],
         };
       } catch (error: any) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to get registry part "${args.id}" (${apiBase()}): ${error.message || error}`,
-            },
-          ],
-          isError: true,
-        };
+        return formatKicadResult({
+          success: false,
+          kind: "provider_unavailable",
+          retryable: true,
+          message: `Failed to get registry part "${args.id}" (${apiBase()}): ${error.message || error}`,
+        });
       }
     },
   );
@@ -394,15 +389,12 @@ Files are written to dest_dir with a sensible filename; returns the saved path(s
     async (args: { id: string; format: "kicad_mod" | "kicad_sym" | "step"; dest_dir: string }) => {
       // Validate destination directory up front.
       if (!existsSync(args.dest_dir) || !statSync(args.dest_dir).isDirectory()) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Destination directory does not exist or is not a directory: ${args.dest_dir}`,
-            },
-          ],
-          isError: true,
-        };
+        return formatKicadResult({
+          success: false,
+          kind: "validation_error",
+          retryable: false,
+          message: `Destination directory does not exist or is not a directory: ${args.dest_dir}`,
+        });
       }
 
       try {
@@ -413,32 +405,26 @@ Files are written to dest_dir with a sensible filename; returns the saved path(s
 
         if (!url) {
           const available = Object.keys(files).join(", ") || "none";
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `No "${args.format}" file (files.${mapping.fileKey}) available for "${args.id}". ` +
-                  `Available files: ${available}.`,
-              },
-            ],
-            isError: true,
-          };
+          return formatKicadResult({
+            success: false,
+            kind: "not_found",
+            retryable: false,
+            message:
+              `No "${args.format}" file (files.${mapping.fileKey}) available for "${args.id}". ` +
+              `Available files: ${available}.`,
+          });
         }
 
         if (!assetUrlAllowed(url)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `Refusing to download from ${url}: its host is not the registry API host ` +
-                  `(${apiBase()}) or a subdomain of it. If your registry intentionally serves ` +
-                  `assets from another host, allow it via PARTS_REGISTRY_ASSET_HOSTS.`,
-              },
-            ],
-            isError: true,
-          };
+          return formatKicadResult({
+            success: false,
+            kind: "authorization_error",
+            retryable: false,
+            message:
+              `Refusing to download from ${url}: its host is not the registry API host ` +
+              `(${apiBase()}) or a subdomain of it. If your registry intentionally serves ` +
+              `assets from another host, allow it via PARTS_REGISTRY_ASSET_HOSTS.`,
+          });
         }
 
         logger.info(`Downloading ${args.format} for ${args.id}: ${url}`);
@@ -477,15 +463,12 @@ Files are written to dest_dir with a sensible filename; returns the saved path(s
           ],
         };
       } catch (error: any) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to download registry part "${args.id}" (${args.format}): ${error.message || error}`,
-            },
-          ],
-          isError: true,
-        };
+        return formatKicadResult({
+          success: false,
+          kind: "provider_unavailable",
+          retryable: true,
+          message: `Failed to download registry part "${args.id}" (${args.format}): ${error.message || error}`,
+        });
       }
     },
   );

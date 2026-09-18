@@ -4,6 +4,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { strictObject } from "../strict-schema.js";
 
 export function registerRoutingTools(server: McpServer, callKicadScript: Function) {
   // Add net tool
@@ -37,14 +38,14 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
           x: z.number(),
           y: z.number(),
           unit: z.string().optional(),
-        })
+        }).strict()
         .describe("Start position"),
       end: z
         .object({
           x: z.number(),
           y: z.number(),
           unit: z.string().optional(),
-        })
+        }).strict()
         .describe("End position"),
       layer: z.string().describe("PCB layer"),
       width: z.number().describe("Trace width in mm"),
@@ -73,21 +74,21 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
           x: z.number(),
           y: z.number(),
           unit: z.string().optional(),
-        })
+        }).strict()
         .describe("Arc start position"),
       mid: z
         .object({
           x: z.number(),
           y: z.number(),
           unit: z.string().optional(),
-        })
+        }).strict()
         .describe("A point on arc midpoint"),
       end: z
         .object({
           x: z.number(),
           y: z.number(),
           unit: z.string().optional(),
-        })
+        }).strict()
         .describe("Arc end position"),
       layer: z.string().describe("PCB layer"),
       width: z.number().describe("Trace width in mm"),
@@ -116,7 +117,7 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
           x: z.number(),
           y: z.number(),
           unit: z.string().optional(),
-        })
+        }).strict()
         .describe("Via position"),
       net: z.string().describe("Net name"),
       viaType: z.string().optional().describe("Via type (through, blind, buried)"),
@@ -143,7 +144,7 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
       net: z.string().describe("Net name"),
       clearance: z.number().optional().describe("Clearance in mm"),
       outline: z
-        .array(z.object({ x: z.number(), y: z.number() }))
+        .array(strictObject({ x: z.number(), y: z.number() }))
         .optional()
         .describe(
           "Array of {x, y} points defining the pour boundary. If omitted, the board outline is used.",
@@ -173,7 +174,7 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
           x: z.number(),
           y: z.number(),
           unit: z.enum(["mm", "inch", "mil"]).optional(),
-        })
+        }).strict()
         .optional()
         .describe("Delete trace nearest to this position"),
       net: z.string().optional().describe("Delete all traces on this net (bulk delete)"),
@@ -207,7 +208,7 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
           x2: z.number(),
           y2: z.number(),
           unit: z.enum(["mm", "inch", "mil"]).optional(),
-        })
+        }).strict()
         .optional()
         .describe("Filter by bounding box region"),
       unit: z.enum(["mm", "inch", "mil"]).optional().describe("Unit for coordinates"),
@@ -242,7 +243,7 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
           x2: z.number(),
           y2: z.number(),
           unit: z.enum(["mm", "inch"]).optional(),
-        })
+        }).strict()
         .optional()
         .describe("Filter to zones whose bounding box overlaps this region"),
     },
@@ -462,13 +463,13 @@ export function registerRoutingTools(server: McpServer, callKicadScript: Functio
         .object({
           reference: z.string(),
           pad: z.string(),
-        })
+        }).strict()
         .describe("Positive pad (component and pad number)"),
       negativePad: z
         .object({
           reference: z.string(),
           pad: z.string(),
-        })
+        }).strict()
         .describe("Negative pad (component and pad number)"),
       layer: z.string().describe("PCB layer"),
       width: z.number().describe("Trace width in mm"),

@@ -20,7 +20,7 @@ export const PROVIDER_ID = "kicad";
 export const PROVIDER_VERSION = "2.7.0-cdt.1";
 
 /** Version of this help/tool contract. Bump on any tool/capability change. */
-export const CONTRACT_VERSION = "cdt-kicad-contract-v1";
+export const CONTRACT_VERSION = "cdt-kicad-contract-v2";
 
 /** Applied CDT common CAD semantics version (subset claim, see capabilities). */
 export const COMMON_CONTRACT_VERSION = "cdt-common-v1";

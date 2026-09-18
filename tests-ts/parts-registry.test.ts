@@ -299,7 +299,12 @@ describe("parts-registry tool handlers (stubbed fetch)", () => {
       dest_dir: dest,
     });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain('No "step" file');
+    expect(JSON.parse(res.content[0].text)).toMatchObject({
+      success: false,
+      kind: "not_found",
+      retryable: false,
+      message: expect.stringContaining('No "step" file'),
+    });
   });
 
   it("download validates the destination directory before any fetch", async () => {
