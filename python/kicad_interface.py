@@ -40,6 +40,7 @@ from error_contract import normalize_failure_response
 from commands.schematic_handlers import SchematicHandlersMixin
 from commands.wire_manager import WireManager
 from resources.resource_definitions import RESOURCE_DEFINITIONS, handle_resource_read
+from utils.path_policy import PathPolicyError, validate_command_paths
 
 # Import tool schemas, resource definitions, and IPC API annotations
 from schemas.tool_schemas import TOOL_SCHEMAS
@@ -1014,6 +1015,24 @@ class KiCADInterface(SchematicHandlersMixin):
     def _handle_command_raw(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Route command to appropriate handler, preferring IPC when available."""
         logger.info(f"Handling command: {command}")
+
+        project_root = getattr(self, "_current_project_path", None)
+        if project_root is None:
+            session_path = getattr(self, "session_board_path", None)
+            if session_path:
+                project_root = Path(session_path).parent
+        try:
+            params = validate_command_paths(command, params, project_root=project_root)
+        except PathPolicyError as exc:
+            logger.warning("Path policy rejected %s: %s", command, exc)
+            return {
+                "success": False,
+                "message": "Path policy rejected request",
+                "errorDetails": str(exc),
+                "kind": "authorization_error",
+                "retryable": False,
+            }
+
         logger.debug(f"Command parameters: {params}")
 
         try:

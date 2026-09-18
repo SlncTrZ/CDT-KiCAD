@@ -29,6 +29,8 @@
   Never in URLs, tool args, logs, or Git-tracked config.
 - Fail-closed: HTTP refuses to start without a token unless
   `MCP_ALLOW_UNAUTHENTICATED=1` is set explicitly for local loopback testing.
+  That test mode is enforced as loopback-only (`localhost`, `127.0.0.0/8`,
+  or `::1`); wildcard/LAN binds fail startup.
 - Failures: `401` missing/invalid identity, `403` valid identity but denied.
 - Vendor keys (`JLCPCB_*`, `DIGIKEY_*`) stay server-side env vars and are
   never accepted as tool arguments.
@@ -75,7 +77,12 @@ is active. See `get_backend_state`.
    `clear_board_outline` are destructive and separated from ordinary edits.
 3. Long autoroute/export jobs have bounded timeouts; a timeout is NOT proof
    of cancellation — re-query state (`is_dirty`, DRC) before retrying.
-4. Keep file operations inside the opened project directory.
+4. Caller filesystem paths are canonicalized before dispatch; `..`, absolute
+   escape, symlink/junction escape, drive/case mismatch and sibling-prefix tricks
+   are rejected. Project reads/writes stay under the active project root.
+   Open/create and library/import/export operations may additionally use roots
+   explicitly trusted by the operator via `KICAD_MCP_TRUSTED_ROOTS` (OS path-list
+   separator). Temporary staging is limited to the system temp workspace.
 5. Engineering interpretation (standards compliance, TCVN/QCVN, Audit Reports)
    belongs to CDT_Engineer Production Domains — this provider reports ECAD
    facts (geometry, nets, violations, measurements) only.

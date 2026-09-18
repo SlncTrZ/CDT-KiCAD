@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { KiCADMcpServer } from "../src/server.js";
@@ -168,7 +169,7 @@ describe("provider tool contract boundary", () => {
       {
         id: "fixture",
         format: "kicad_mod",
-        dest_dir: "/definitely/not/a/real/directory",
+        dest_dir: join(process.cwd(), "__missing_registry_validation_dir__"),
       },
       {},
     );

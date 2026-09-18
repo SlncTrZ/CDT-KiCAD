@@ -11,6 +11,7 @@
  */
 
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import { isIP } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { logger } from "./logger.js";
@@ -24,6 +25,19 @@ import { PROVIDER_ID, PROVIDER_VERSION, CONTRACT_VERSION } from "./provider-cont
 
 /** Builds a fully-registered MCP server sharing the running bridge. */
 export type HttpServerFactory = () => McpServer;
+
+/** True only for hostnames/addresses that cannot expose unauthenticated HTTP off-host. */
+export function isLoopbackHost(host: string): boolean {
+  let normalized = host.trim().toLowerCase();
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    normalized = normalized.slice(1, -1);
+  }
+  if (normalized === "localhost" || normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  if (isIP(normalized) !== 4) return false;
+  return normalized.split(".", 1)[0] === "127";
+}
 
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const verdict = verifyToken(req.headers as Record<string, unknown>);
@@ -49,12 +63,22 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
  * Create the Express app. Throws fail-closed when network auth is not
  * configured and no explicit local-testing opt-out is set.
  */
-export function createHttpApp(factory: HttpServerFactory): Express {
-  if (!expectedToken() && !allowUnauthenticated()) {
-    throw new Error(
-      "Refusing network transport without KICAD_MCP_TOKEN. " +
-        "Set KICAD_MCP_TOKEN (recommended) or MCP_ALLOW_UNAUTHENTICATED=1 for local loopback testing only.",
-    );
+export function createHttpApp(
+  factory: HttpServerFactory,
+  intendedHost = process.env.MCP_HOST?.trim() || "127.0.0.1",
+): Express {
+  if (!expectedToken()) {
+    if (!allowUnauthenticated()) {
+      throw new Error(
+        "Refusing network transport without KICAD_MCP_TOKEN. " +
+          "Set KICAD_MCP_TOKEN (recommended) or MCP_ALLOW_UNAUTHENTICATED=1 for local loopback testing only.",
+      );
+    }
+    if (!isLoopbackHost(intendedHost)) {
+      throw new Error(
+        "MCP_ALLOW_UNAUTHENTICATED=1 is loopback-only; refusing non-loopback HTTP bind.",
+      );
+    }
   }
 
   const app = express();
@@ -127,7 +151,7 @@ export async function listenHttp(
   port: number,
   host: string,
 ): Promise<void> {
-  const app = createHttpApp(factory);
+  const app = createHttpApp(factory, host);
   await new Promise<void>((resolve) => {
     app.listen(port, host, () => {
       logger.info(`CDT-KiCAD (${PROVIDER_ID}) Streamable HTTP listening on http://${host}:${port}/mcp`);
