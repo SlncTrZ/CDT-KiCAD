@@ -185,50 +185,56 @@ def _wire_open_project(iface: Any, board_to_assign: Any, board_path: str) -> Non
     iface.command_routes = {"open_project": iface.project_commands.open_project}
 
 
-def test_handle_open_project_surfaces_dehydration_when_recovery_fails():
+def test_handle_open_project_surfaces_dehydration_when_recovery_fails(tmp_path: Path):
     """If LoadBoard returns a dehydrated proxy and recovery fails, the MCP must
     return success=False — never claim "Opened project" while the board is
     unusable. This is the fix for the silent-success bug users hit."""
     iface = _make_iface()
     dehydrated = _make_dehydrated_board()
-    _wire_open_project(iface, dehydrated, "/tmp/test.kicad_pcb")
+    board_path = tmp_path / "test.kicad_pcb"
+    project_path = tmp_path / "test.kicad_pro"
+    _wire_open_project(iface, dehydrated, str(board_path))
     iface._safe_load_board = MagicMock(return_value=None)  # recovery impossible
 
-    result = iface.handle_command("open_project", {"filename": "/tmp/test.kicad_pro"})
+    result = iface.handle_command("open_project", {"filename": str(project_path)})
 
     assert result["success"] is False, f"Expected failure, got: {result}"
     combined = (result.get("errorDetails", "") + result.get("message", "")).lower()
     assert "dehydrated" in combined or "swigpyobject" in combined
 
 
-def test_handle_open_project_recovers_via_safe_load_board():
+def test_handle_open_project_recovers_via_safe_load_board(tmp_path: Path):
     """When _safe_load_board succeeds, open_project should report success
     with a warning and the recovered board should be installed."""
     iface = _make_iface()
     dehydrated = _make_dehydrated_board()
     healthy = _make_healthy_board()
-    _wire_open_project(iface, dehydrated, "/tmp/test.kicad_pcb")
+    board_path = tmp_path / "test.kicad_pcb"
+    project_path = tmp_path / "test.kicad_pro"
+    _wire_open_project(iface, dehydrated, str(board_path))
     iface._safe_load_board = MagicMock(return_value=healthy)
 
-    result = iface.handle_command("open_project", {"filename": "/tmp/test.kicad_pro"})
+    result = iface.handle_command("open_project", {"filename": str(project_path)})
 
     assert result["success"] is True, f"Expected recovery success, got: {result}"
     assert iface.board is healthy
-    iface._safe_load_board.assert_called_once_with("/tmp/test.kicad_pcb")
+    iface._safe_load_board.assert_called_once_with(str(board_path))
     warnings = result.get("warnings", [])
     assert any("dehydrated" in w.lower() for w in warnings)
 
 
-def test_handle_open_project_passes_through_when_already_healthy():
+def test_handle_open_project_passes_through_when_already_healthy(tmp_path: Path):
     """The fast path: LoadBoard returned a healthy board, no recovery needed."""
     iface = _make_iface()
     healthy = _make_healthy_board()
-    _wire_open_project(iface, healthy, "/tmp/test.kicad_pcb")
+    board_path = tmp_path / "test.kicad_pcb"
+    project_path = tmp_path / "test.kicad_pro"
+    _wire_open_project(iface, healthy, str(board_path))
     iface._safe_load_board = MagicMock(
         side_effect=AssertionError("should not be called when board is healthy")
     )
 
-    result = iface.handle_command("open_project", {"filename": "/tmp/test.kicad_pro"})
+    result = iface.handle_command("open_project", {"filename": str(project_path)})
 
     assert result["success"] is True
     assert iface.board is healthy

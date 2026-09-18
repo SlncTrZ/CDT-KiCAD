@@ -329,7 +329,7 @@ class TestKicadCliRoundTrip:
     def test_erc_parses_and_roundtrips(self, tmp_path: Any) -> None:
         import sexpdata
 
-        sch = _project(tmp_path, "rt")
+        sch = _project_v10(tmp_path, "rt")
         DynamicSymbolLoader().create_component_instance(
             sch,
             "Device",
