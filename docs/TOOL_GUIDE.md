@@ -58,17 +58,35 @@ never fake success:
 - `common.transform.{move,rotate}` — supported for board components (native).
 - `common.transaction.*`, `common.undo`, `common.redo` — UNSUPPORTED
   (`reason: file_write_no_atomic_transaction`; use `snapshot_project` checkpoints).
-- `common.import_asset` / `common.export_asset` — supported (import_*/export_*).
+- `common.import_asset` / `common.export_asset` — supported (import*\*/export*\*).
 - `common.validate.*` / `common.inspect` / `common.measure` — supported
   (`validate_*`, `run_drc`, `run_erc`, extents/clearance queries).
 - `kicad.schematic.*`, `kicad.board.*`, `kicad.routing.*`, `kicad.library.*`,
   `kicad.export.*`, `kicad.drc.*`, `kicad.parts.*` — provider extensions,
   permanently KiCAD-specific (never promoted to common unilaterally).
 
-Backend context: `swig` (file-based pcbnew) or `ipc` (live KiCAD UI sync,
-experimental). The provider never silently downgrades: a capability requiring
-the live backend returns typed `unsupported_capability` when only file mode
-is active. See `get_backend_state`.
+Runtime capability entries distinguish static implementation from current
+availability: `implemented` says the provider has the operation;
+`available_now` is computed from the current backend/session context and is
+accompanied by `backend`, `reason`, and `context` fields.
+
+Backend/session state is one of `none | swig | ipc | degraded_uncertain`.
+An IPC-owned session that loses IPC stays IPC-owned and becomes
+`degraded_uncertain`; it never silently reloads the saved board and continues
+mutating through SWIG. The live board identity is also re-checked while an
+IPC-owned session is active, so switching the KiCad GUI to another board makes
+the session degraded before any mutation is routed. Mutations then fail closed
+with typed `provider_unavailable`. Only explicitly classified saved-file reads
+may use a SWIG/disk fallback, and their response labels the
+source/backend/reason. Closing a degraded session with `save=false` is an
+explicit discard and warns that unsaved GUI state may have been lost.
+
+Use `reconnect_backend` to restore an IPC-owned session only after the live
+KiCad document identity matches the pinned board. Use
+`rebind_backend_session` for an explicit ownership transfer; IPC→SWIG requires
+the same board identity plus `confirmDiscardLiveState=true` because unsaved GUI
+state may otherwise be lost. A SWIG-pinned session never silently upgrades to
+IPC. See `get_backend_state`.
 
 ## Safety rules every client must respect
 
