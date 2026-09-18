@@ -1607,7 +1607,9 @@ class KiCADInterface(SchematicHandlersMixin):
         "add_copper_pour",
         "refill_zones",
         "import_svg_logo",
-        "sync_schematic_to_board",
+        # sync_schematic_to_board persists with board.Save() internally and
+        # refreshes the disk signature there; a second generic auto-save would
+        # duplicate the write and can manufacture a false external-edit race.
         "create_board_from_schematic",
         "connect_passthrough",
         "connect_to_net",

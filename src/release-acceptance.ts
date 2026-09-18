@@ -41,6 +41,13 @@ export interface NativeVerticalSliceFixture {
   projectPath: string;
   schematicPath: string;
   boardPath: string;
+  environmentRequirements: {
+    footprintLibraries: Array<{
+      nickname: string;
+      footprint: string;
+      requirement: string;
+    }>;
+  };
   steps: ReleaseFixtureStep[];
   artifactsToHash: string[];
   artifactRootsToHash: string[];
@@ -254,6 +261,16 @@ export function buildNativeVerticalSliceFixture(
     projectPath,
     schematicPath,
     boardPath,
+    environmentRequirements: {
+      footprintLibraries: [
+        {
+          nickname: "Resistor_SMD",
+          footprint: "R_0603_1608Metric",
+          requirement:
+            "The native runner must resolve this installed KiCad library through a global or project fp-lib-table before board sync. If the target user has no global table, stage a disposable project-local mapping and record its path/hash as evidence.",
+        },
+      ],
+    },
     steps,
     artifactsToHash: [projectPath, schematicPath, boardPath, bomPath, placementPath],
     artifactRootsToHash: [fabricationDir, drillDir],

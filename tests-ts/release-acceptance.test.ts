@@ -38,6 +38,15 @@ describe("native release fixture", () => {
     }
 
     expect(fixture.disposable).toBe(true);
+    expect(fixture.environmentRequirements.footprintLibraries).toEqual([
+      expect.objectContaining({
+        nickname: "Resistor_SMD",
+        footprint: "R_0603_1608Metric",
+      }),
+    ]);
+    expect(fixture.environmentRequirements.footprintLibraries[0]?.requirement).toContain(
+      "project-local mapping",
+    );
     expect(fixture.artifactsToHash).toEqual(
       expect.arrayContaining([
         expect.stringMatching(/\.kicad_pro$/),
