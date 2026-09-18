@@ -24,6 +24,9 @@
     "format": "prettier --write 'src/**/*.ts' && black python/",
     "docs:tools": "node scripts/generate-tool-inventory.mjs",
     "docs:tools:check": "node scripts/generate-tool-inventory.mjs --check",
+    "release:fixture": "npm run build && node scripts/release-acceptance.mjs fixture",
+    "release:score": "npm run build && node scripts/release-acceptance.mjs score",
+    "release:manifest": "npm run build && node scripts/release-acceptance.mjs manifest",
     "prepare": "npm run build",
     "pretest": "npm run build"
   },

@@ -38,12 +38,15 @@
 - `help` — read-only operating contract (this guide + versions + fingerprint).
 - `system_status` — liveness, backend, dependency reachability (no side effects).
 - `system_capabilities` — machine-readable capability map (see below).
-- `list_tool_categories` — browse the 16 indexed ECAD categories.
+- `list_tool_categories` — browse the 20 indexed ECAD categories.
 - `get_category_tools` — tools inside one category.
-- `search_tools` — keyword search across indexed tools.
+- `search_tools` — keyword search across 233 indexed tools.
 
 Every ECAD tool is registered directly and callable by name; discovery is a
-catalogue, never a gate. Do not invent tool names — search first.
+catalogue, never a gate. Of 236 registered tools, 233 are indexed. The three
+meta-discovery controls above are intentionally excluded from their own keyword
+catalogue to avoid circular self-discovery. Do not invent tool names — search
+first.
 
 ## Capability map (honest subset)
 
@@ -56,7 +59,7 @@ never fake success:
 - `common.transform.{move,rotate}` — supported for board components (native).
 - `common.transaction.*`, `common.undo`, `common.redo` — UNSUPPORTED
   (`reason: file_write_no_atomic_transaction`; use `snapshot_project` checkpoints).
-- `common.import_asset` / `common.export_asset` — supported (import_*/export_*).
+- `common.import_asset` / `common.export_asset` — supported (import*\*/export*\*).
 - `common.validate.*` / `common.inspect` / `common.measure` — supported
   (`validate_*`, `run_drc`, `run_erc`, extents/clearance queries).
 - `kicad.schematic.*`, `kicad.board.*`, `kicad.routing.*`, `kicad.library.*`,
@@ -87,10 +90,19 @@ conflict | rate_limited | timeout | provider_unavailable | internal_error |
 unsupported_capability`. Errors never include credentials, tokens, or stack
 traces. Each error states whether retry is reasonable.
 
+## Release acceptance evidence
+
+Repository tooling can prepare native/negative fixture plans, weighted score
+reports and evidence manifests, but those artifacts do not certify a build by
+themselves. Native evidence must be rerun against the final integration HEAD on
+the target KiCAD build. Any failed hard gate means `NOT CERTIFIED` regardless
+of weighted score. Evidence manifests reject prompt/credential fields and record
+explicit verification limitations.
+
 ## Versioning
 
 - `provider_version` — this software build (semver + `-cdt.N` fork suffix).
-- `contract_version` — this help/tool contract (`cdt-kicad-contract-v1`).
+- `contract_version` — this help/discovery contract (`cdt-kicad-contract-v2`).
 - `common_contract_version` — applied CDT common semantics (`cdt-common-v1`).
 - `protocol_version` — MCP protocol / SDK compatibility declaration.
 - `contract_hash` — SHA-256 over this guide's canonical content; clients and

@@ -45,8 +45,8 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standa
 
 **Key Capabilities:**
 
-- 236 tools registered, 176 of them indexed for keyword discovery
-- 176 tools across 16 categories with JSON Schema validation
+- 236 tools registered; 233 indexed for keyword discovery and 3 discovery controls intentionally direct-only
+- 233 discoverable tools across 20 categories with JSON Schema validation
 - Keyword tool discovery via `search_tools` / `get_category_tools`
 - 23 dynamic resources exposing project state
 - Complete schematic workflow with 65 tools (authoring, batch edits, hierarchy, layout) and dynamic symbol loading (~10,000 symbols)
@@ -54,7 +54,7 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standa
 - Custom footprint and symbol creation tools
 - JLCPCB parts integration with 2.5M+ component catalog and local library search
 - Datasheet enrichment via LCSC
-- Full MCP 2025-06-18 protocol compliance
+- MCP 2025-06-18 protocol support via SDK 1.21.0
 - Cross-platform support (Linux, Windows, macOS)
 - Real-time KiCAD UI integration via IPC API (experimental)
 - Comprehensive error handling and logging
@@ -494,19 +494,21 @@ Every tool is registered individually, so an MCP client can call any of them by
 name. On top of that, most tools are indexed so an assistant can find one by
 keyword instead of guessing:
 
-- **32 essential tools** that `search_tools` surfaces first, covering the
-  operations nearly every session needs
-- **176 tools indexed across 16 categories** (board, component, export, drc,
+- **36 direct essentials** in `directToolNames`, covering the operations
+  nearly every session needs
+- **233 tools indexed across 20 categories** (board, component, export, drc,
   schematic, library, symbol_library, symbol_pins, schematic_hierarchy,
   schematic_layout, schematic_batch, routing, autoroute, validation,
-  parts-registry, digikey)
+  footprint, datasheet, jlcpcb, eagle_import, parts-registry, digikey)
 - **3 discovery tools**:
   - `list_tool_categories` - Browse all available categories
   - `get_category_tools` - View tools in a specific category
   - `search_tools` - Find tools by keyword
 
-The remaining 60 registered tools are not indexed yet. They work exactly the
-same when called by name; they simply do not appear in `search_tools` results.
+The three discovery controls are intentionally excluded from their own keyword
+catalogue to avoid circular self-discovery. The D12 baseline audit classifies
+all formerly unindexed tools in `src/tools/discovery-audit.ts`; there are no
+unclassified registered tools.
 
 **Why this matters:** the assistant can locate the right tool for your task by
 keyword rather than inventing a name. Note that discovery does _not_ reduce
@@ -575,7 +577,7 @@ Access project state without executing tools:
 
 ## Available Tools
 
-The server exposes every tool directly, so your assistant can call any of them without a discovery step -- just ask for what you want to accomplish. **176 tools** are additionally indexed into 16 functional categories, so `search_tools` and `get_category_tools` can find one by keyword. Three of them (`help`, `system_status`, `system_capabilities`) are the read-only SlncTrZ provider contract — always visible, never mutating.
+The server exposes every tool directly, so your assistant can call any of them without a discovery step -- just ask for what you want to accomplish. **233 tools** are indexed into 20 functional categories, so `search_tools` and `get_category_tools` can find them by keyword. The three meta-discovery controls themselves remain intentionally direct-only. `help`, `system_status`, and `system_capabilities` are the read-only SlncTrZ provider contract — always visible, never mutating.
 
 The lists below are a curated tour of the most useful tools, not the full set.
 For the complete, generated reference of all 236 tools -- including how each one
@@ -1554,8 +1556,8 @@ How many Basic parts are available?
 
 - **JSON-RPC 2.0 Transport:** Bi-directional communication via STDIO
 - **Protocol Version:** MCP 2025-06-18
-- **Capabilities:** Tools (233), Resources (23)
-- **Tool discovery:** keyword search catalogue indexing 176 tools in 16 categories
+- **Capabilities:** Tools (236), Resources (23)
+- **Tool discovery:** keyword search catalogue indexing 233 tools in 20 categories
 - **Error Handling:** Standard JSON-RPC error codes
 
 ### TypeScript Server (`src/`)
@@ -1632,6 +1634,28 @@ npm run test:py
 # All tests with coverage
 npm run test:coverage
 ```
+
+### Release Acceptance Evidence
+
+The D12 acceptance tooling prepares reproducible release-proof inputs; it does
+not certify a build by itself. Native evidence must be rerun on the final
+integration HEAD with the target KiCAD build.
+
+```bash
+# Prepare disposable native + negative fixture plans and their SHA-256 hashes
+npm run release:fixture -- --workspace /tmp/cdt-kicad-release --out-dir ./release-evidence/fixtures
+
+# Compute the weighted report from an acceptance-check JSON file
+npm run release:score -- --input ./release-evidence/checks.json --out ./release-evidence/score.json
+
+# Build the evidence manifest; fixturePaths/artifactPaths may name files or directories
+npm run release:manifest -- --input ./release-evidence/manifest-input.json --out ./release-evidence/manifest.json
+```
+
+Any failed hard gate forces `NOT CERTIFIED` regardless of the arithmetic
+score. Evidence manifests reject prompt/credential fields and record source
+SHA, KiCAD build, provider/contract identity, capability snapshot, fixture
+hashes, test results, artifact hashes, and explicit limitations.
 
 ### Linting and Formatting
 
@@ -1725,7 +1749,7 @@ See [STATUS_SUMMARY.md](docs/STATUS_SUMMARY.md) for the complete status matrix a
 - Datasheet enrichment via LCSC
 - Freerouting autorouter integration (Java, Docker, Podman)
 - UI auto-launch and management
-- Full MCP 2025-06-18 protocol compliance
+- MCP 2025-06-18 protocol support via SDK 1.21.0
 
 **IPC Backend (Experimental):**
 
