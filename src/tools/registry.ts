@@ -282,6 +282,7 @@ export const directToolNames = [
   "is_dirty",
   "discard_or_reload",
   "snapshot_project",
+  "restore_checkpoint",
   "get_project_info",
 
   // Core PCB operations

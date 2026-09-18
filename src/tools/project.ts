@@ -129,12 +129,19 @@ export function registerProjectTools(server: McpServer, callKicadScript: Functio
         .boolean()
         .optional()
         .describe("Replace an existing destination when path points to a different file"),
+      operationId: z
+        .string()
+        .optional()
+        .describe(
+          "Stable semantic operation ID. Reuse the same value after an uncertain timeout; never mint a new ID for a blind retry.",
+        ),
     },
     async (args: {
       path?: string;
       force?: boolean;
       forceExternalChanges?: boolean;
       overwrite?: boolean;
+      operationId?: string;
     }) => {
       const result = await callKicadScript("save_project", args);
       return {
@@ -251,31 +258,50 @@ export function registerProjectTools(server: McpServer, callKicadScript: Functio
     },
   );
 
-  // Snapshot project tool — saves a named checkpoint as PDF/image
   server.tool(
     "snapshot_project",
-    "Save a named checkpoint snapshot of the current project state (renders board to PDF and records step label). Call after completing each major step — e.g. after Step 1 (schematic_ok) and Step 2 (layout_ok). Required by the demo workflow before waiting for user confirmation.",
+    "Create a recovery checkpoint manifest with source identity/revision and SHA-256 hashes for copied project resources. Recovery checkpoints exclude prompt/session logs by default.",
     {
-      step: z.string().describe("Step number or identifier, e.g. '1' or '2'"),
-      label: z
-        .string()
-        .describe("Short label for this checkpoint, e.g. 'schematic_ok' or 'layout_ok'"),
-      prompt: z
+      step: z.string().optional().describe("Optional step identifier used in the checkpoint name"),
+      label: z.string().optional().describe("Optional short checkpoint label"),
+      checkpointId: z
         .string()
         .optional()
-        .describe(
-          "Full prompt text to save as PROMPT_step{step}_{timestamp}.md alongside the snapshot",
-        ),
+        .describe("Optional stable checkpoint ID; generated when omitted"),
+      scope: z.string().optional().describe("Checkpoint scope label (default: project)"),
+      projectPath: z
+        .string()
+        .optional()
+        .describe("Project directory; defaults to the currently loaded board directory"),
     },
-    async (args: { step: string; label: string; prompt?: string }) => {
+    async (args: {
+      step?: string;
+      label?: string;
+      checkpointId?: string;
+      scope?: string;
+      projectPath?: string;
+    }) => {
       const result = await callKicadScript("snapshot_project", args);
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "restore_checkpoint",
+    "Restore a recovery checkpoint only after manifest/resource hash validation, then reopen the restored board and verify semantic read-back. checkpointed_atomic is true only after all verification succeeds.",
+    {
+      checkpointPath: z.string().describe("Path to a checkpoint directory containing manifest.json"),
+      projectPath: z
+        .string()
+        .optional()
+        .describe("Optional restore target; defaults to the current/source project directory"),
+    },
+    async (args: { checkpointPath: string; projectPath?: string }) => {
+      const result = await callKicadScript("restore_checkpoint", args);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     },
   );

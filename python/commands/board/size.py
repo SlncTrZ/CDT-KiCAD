@@ -30,6 +30,9 @@ class BoardSizeCommands:
             width = params.get("width")
             height = params.get("height")
             unit = params.get("unit", "mm")
+            # Receipt semantics live in the Node bridge; this compatibility
+            # read keeps direct JSON-RPC parameter vocabulary in sync.
+            _operation_id = params.get("operationId", params.get("operation_id"))
 
             if width is None or height is None:
                 return {

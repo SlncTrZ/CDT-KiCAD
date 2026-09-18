@@ -42,6 +42,12 @@ from resources.resource_definitions import RESOURCE_DEFINITIONS, handle_resource
 
 # Import tool schemas, resource definitions, and IPC API annotations
 from schemas.tool_schemas import TOOL_SCHEMAS
+from recovery import (
+    capture_board_semantics,
+    capture_project_checkpoint,
+    reconcile_operation,
+    restore_verified_checkpoint,
+)
 
 _annotation_loader = AnnotationLoader()
 
@@ -496,6 +502,7 @@ class KiCADInterface(SchematicHandlersMixin):
             "is_dirty": self._handle_is_dirty,
             "discard_or_reload": self._handle_discard_or_reload,
             "snapshot_project": self._handle_snapshot_project,
+            "restore_checkpoint": self._handle_restore_checkpoint,
             "get_project_info": self.project_commands.get_project_info,
             # Board commands
             "set_board_size": self.board_commands.set_board_size,
@@ -701,6 +708,7 @@ class KiCADInterface(SchematicHandlersMixin):
             "launch_kicad_ui": self._handle_launch_kicad_ui,
             # Internal warm-up (pays wxApp init cost during startup)
             "_warmup": self._handle_warmup,
+            "_reconcile_operation": self._handle_reconcile_operation,
             # IPC-specific commands (real-time operations)
             "get_backend_info": self._handle_get_backend_info,
             "ipc_add_track": self._handle_ipc_add_track,
@@ -1983,6 +1991,10 @@ class KiCADInterface(SchematicHandlersMixin):
             destination to be replaced.
         """
         board_path = self._authoritative_board_path()
+        # Semantic operation identity is consumed by the Node receipt bridge;
+        # keep the direct Python/JSON-RPC schema vocabulary compatible without
+        # reimplementing receipt or backend-owner state here.
+        _operation_id = params.get("operationId", params.get("operation_id"))
         filename = params.get("filename") or params.get("path")
         call_params = dict(params)
         if filename:
@@ -4746,88 +4758,156 @@ class KiCADInterface(SchematicHandlersMixin):
             return {"success": False, "message": str(e)}
 
     def _handle_snapshot_project(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Copy the entire project folder to a snapshot directory for checkpoint/resume."""
-        import shutil
-        from datetime import datetime
-        from pathlib import Path
+        """Create a content-addressed recovery checkpoint manifest."""
 
         try:
-            step = params.get("step", "")
-            label = params.get("label", "")
-            prompt_text = params.get("prompt", "")
-            # Determine project directory from loaded board or explicit path
             project_dir = None
-            if self.board:
-                board_file = self.board.GetFileName()
-                if board_file:
-                    project_dir = str(Path(board_file).parent)
+            board_path = self._authoritative_board_path()
+            if board_path:
+                project_dir = str(Path(board_path).parent)
             if not project_dir:
                 project_dir = params.get("projectPath")
             if not project_dir or not Path(project_dir).is_dir():
                 return {
                     "success": False,
-                    "message": "Could not determine project directory for snapshot",
+                    "message": "Could not determine project directory for checkpoint",
                 }
 
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            project = Path(project_dir).expanduser().resolve()
+            step = str(params.get("step", "") or "")
+            label = str(params.get("label", "") or "")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            raw_id = params.get("checkpointId")
+            if not raw_id:
+                suffix = "-".join(part for part in [f"step{step}" if step else "", label, timestamp] if part)
+                raw_id = f"cp-{suffix}" if suffix else f"cp-{timestamp}"
+            checkpoint_id = "".join(
+                char if char.isalnum() or char in "._-" else "-" for char in str(raw_id)
+            )
 
-            # Save prompt + log into logs/ subdirectory before snapshotting
-            logs_dir = Path(project_dir) / "logs"
-            logs_dir.mkdir(exist_ok=True)
+            identity: Dict[str, Any] = {"project_dir": str(project)}
+            revision: Dict[str, Any] = {}
+            if board_path:
+                board = Path(board_path).expanduser().resolve()
+                try:
+                    identity["board_path"] = board.relative_to(project).as_posix()
+                except ValueError:
+                    identity["board_path"] = str(board)
+                signature = self._disk_signature(str(board))
+                if signature:
+                    revision["board_mtime_ns"] = signature[0]
+                    revision["board_sha256"] = signature[1]
 
-            prompt_file = None
-            if prompt_text:
-                prompt_filename = f"PROMPT_step{step}_{ts}.md" if step else f"PROMPT_{ts}.md"
-                prompt_file = logs_dir / prompt_filename
-                prompt_file.write_text(prompt_text, encoding="utf-8")
-                logger.info(f"Prompt saved: {prompt_file}")
+            project_path = self._current_project_file_path(board_path)
+            if project_path:
+                project_file = Path(project_path).expanduser().resolve()
+                try:
+                    identity["project_path"] = project_file.relative_to(project).as_posix()
+                except ValueError:
+                    identity["project_path"] = str(project_file)
 
-            # Copy current MCP session log into logs/ before snapshotting
-            import platform
-
-            system = platform.system()
-            if system == "Windows":
-                mcp_log_dir = Path(os.environ.get("APPDATA", "")) / "Claude" / "logs"
-            elif system == "Darwin":
-                mcp_log_dir = Path("~/Library/Logs/Claude").expanduser()
-            else:
-                mcp_log_dir = Path("~/.config/Claude/logs").expanduser()
-            mcp_log_src = mcp_log_dir / "mcp-server-kicad.log"
-            mcp_log_dest = None
-            if mcp_log_src.exists():
-                with open(mcp_log_src, "r", encoding="utf-8", errors="replace") as f:
-                    all_lines = f.readlines()
-                session_start = 0
-                for i, line in enumerate(all_lines):
-                    if "Initializing server" in line:
-                        session_start = i
-                session_lines = all_lines[session_start:]
-                log_filename = f"mcp_log_step{step}_{ts}.txt" if step else f"mcp_log_{ts}.txt"
-                mcp_log_dest = logs_dir / log_filename
-                with open(mcp_log_dest, "w", encoding="utf-8") as f:
-                    f.writelines(session_lines)
-                logger.info(f"MCP session log saved: {mcp_log_dest} ({len(session_lines)} lines)")
-
-            base_name = Path(project_dir).name
-            suffix_parts = [p for p in [f"step{step}" if step else "", label, ts] if p]
-            snapshot_name = base_name + "_snapshot_" + "_".join(suffix_parts)
-            snapshots_base = Path(project_dir) / "snapshots"
-            snapshots_base.mkdir(exist_ok=True)
-            snapshot_dir = str(snapshots_base / snapshot_name)
-
-            shutil.copytree(project_dir, snapshot_dir, ignore=shutil.ignore_patterns("snapshots"))
-            logger.info(f"Project snapshot saved: {snapshot_dir}")
+            semantic_state = capture_board_semantics(self) if board_path else {}
+            if board_path and not semantic_state.get("semantic_valid"):
+                return {
+                    "success": False,
+                    "message": "Could not capture an owner-consistent semantic checkpoint state",
+                    "backend_owner": semantic_state.get("backend_owner", "degraded_uncertain"),
+                    "checkpointed_atomic": False,
+                }
+            checkpoint = capture_project_checkpoint(
+                project,
+                checkpoint_id=checkpoint_id,
+                scope=str(params.get("scope") or "project"),
+                source_identity=identity,
+                source_revision=revision,
+                semantic_state=semantic_state,
+            )
+            logger.info(f"Project recovery checkpoint saved: {checkpoint['checkpoint_path']}")
             return {
                 "success": True,
-                "message": f"Snapshot saved: {snapshot_name}",
-                "snapshotPath": snapshot_dir,
-                "sourceDir": project_dir,
-                "promptSaved": str(prompt_file) if prompt_file else None,
-                "mcpLogSaved": str(mcp_log_dest) if mcp_log_dest else None,
+                "message": f"Checkpoint saved: {checkpoint_id}",
+                "checkpoint_id": checkpoint_id,
+                "scope": str(params.get("scope") or "project"),
+                "checkpointPath": checkpoint["checkpoint_path"],
+                "snapshotPath": checkpoint["checkpoint_path"],
+                "manifestPath": checkpoint["manifest_path"],
+                "resourceCount": checkpoint["resource_count"],
+                "sourceIdentity": identity,
+                "sourceRevision": revision,
+                "semantic_sha256": semantic_state.get("semantic_sha256"),
+                "promptSaved": None,
+                "mcpLogSaved": None,
+                "recoveryExcludes": ["logs", "snapshots"],
             }
         except Exception as e:
             logger.error(f"snapshot_project error: {e}")
             return {"success": False, "message": str(e)}
+
+    def _handle_restore_checkpoint(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Adapter around the testable verified-restore primitive."""
+
+        checkpoint_path = params.get("checkpointPath")
+        if not checkpoint_path:
+            return {
+                "success": False,
+                "message": "checkpointPath is required",
+                "checkpointed_atomic": False,
+            }
+
+        board_path = self._authoritative_board_path()
+        current_project = str(Path(board_path).parent) if board_path else None
+        project_dir = params.get("projectPath") or current_project
+        if not project_dir:
+            # The recovery primitive will validate source identity; here we only
+            # need a target when no board is currently loaded.
+            try:
+                manifest = json.loads(
+                    (Path(checkpoint_path).expanduser().resolve() / "manifest.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                project_dir = (
+                    ((manifest.get("source") or {}).get("identity") or {}).get("project_dir")
+                )
+            except Exception:
+                project_dir = None
+
+        if not project_dir:
+            return {
+                "success": False,
+                "message": "Could not determine restore target project directory",
+                "checkpointed_atomic": False,
+            }
+
+        return restore_verified_checkpoint(
+            checkpoint_path,
+            project_dir,
+            reopen_board=lambda path: self._handle_open_board({"boardPath": path}),
+            read_semantics=lambda: capture_board_semantics(self),
+        )
+
+    def _handle_reconcile_operation(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal read-after-write reconciliation for a timed-out semantic operation."""
+
+        operation_id = params.get("operation_id")
+        command = params.get("command")
+        command_params = params.get("params")
+        late_result = params.get("late_result")
+        if (
+            not operation_id
+            or not isinstance(command, str)
+            or not isinstance(command_params, dict)
+            or not isinstance(late_result, dict)
+        ):
+            return {
+                "success": False,
+                "state": "uncertain",
+                "message": "Invalid operation reconciliation payload",
+            }
+
+        result = reconcile_operation(self, command, command_params, late_result)
+        result["operation_id"] = operation_id
+        return result
 
     def _handle_check_kicad_ui(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Check if KiCAD UI is running.
