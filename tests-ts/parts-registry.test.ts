@@ -309,10 +309,17 @@ describe("parts-registry tool handlers (stubbed fetch)", () => {
   });
 
   it("download rejects an untrusted destination before any fetch", async () => {
-    const previousTmp = process.env.TMPDIR;
+    const previousTemp = process.env.TEMP;
+    const previousTmp = process.env.TMP;
+    const previousTmpDir = process.env.TMPDIR;
     const allowedTemp = join(dest, "allowed-temp");
     mkdirSync(allowedTemp);
-    process.env.TMPDIR = allowedTemp;
+    if (process.platform === "win32") {
+      process.env.TEMP = allowedTemp;
+      process.env.TMP = allowedTemp;
+    } else {
+      process.env.TMPDIR = allowedTemp;
+    }
     delete process.env.KICAD_MCP_TRUSTED_ROOTS;
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
@@ -326,8 +333,12 @@ describe("parts-registry tool handlers (stubbed fetch)", () => {
       expect(res.content[0].text).toContain("outside the configured filesystem roots");
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
-      if (previousTmp === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = previousTmp;
+      if (previousTemp === undefined) delete process.env.TEMP;
+      else process.env.TEMP = previousTemp;
+      if (previousTmp === undefined) delete process.env.TMP;
+      else process.env.TMP = previousTmp;
+      if (previousTmpDir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpDir;
     }
   });
 
