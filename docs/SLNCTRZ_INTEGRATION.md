@@ -6,16 +6,16 @@
 
 ## Endpoint & auth
 
-| Item | Value |
-| --- | --- |
-| Provider ID | `kicad` |
-| Network endpoint | `POST http://<host>:3100/mcp` (Streamable HTTP) |
-| Health | `GET http://<host>:3100/healthz` (unauthenticated liveness) |
-| Primary credential | `Authorization: Bearer <token>` |
-| Compatibility credential | `X-API-Key: <token>` (same single auth layer) |
-| Token source | `KICAD_MCP_TOKEN` env / secret manager, never Git |
-| Failure codes | `401` missing/invalid identity · `403` denied |
-| Local mode | STDIO (`node dist/index.js`), no token, process-local |
+| Item                     | Value                                                       |
+| ------------------------ | ----------------------------------------------------------- |
+| Provider ID              | `kicad`                                                     |
+| Network endpoint         | `POST http://<host>:3100/mcp` (Streamable HTTP)             |
+| Health                   | `GET http://<host>:3100/healthz` (unauthenticated liveness) |
+| Primary credential       | `Authorization: Bearer <token>`                             |
+| Compatibility credential | `X-API-Key: <token>` (same single auth layer)               |
+| Token source             | `KICAD_MCP_TOKEN` env / secret manager, never Git           |
+| Failure codes            | `401` missing/invalid identity · `403` denied               |
+| Local mode               | STDIO (`node dist/index.js`), no token, process-local       |
 
 ## Gateway catalog
 
@@ -38,8 +38,9 @@ name; discovery never gates execution.
 ## Contract drift detection
 
 After `help`, pin `contract_hash` (SHA-256 over `docs/TOOL_GUIDE.md`).
-Re-fetch `help` when the hash changes; treat a changed hash as a new
-contract version (`cdt-kicad-contract-v2` → next).
+Re-fetch `help` when the hash changes; the current discovery/help/tool contract is
+`cdt-kicad-contract-v2`. A changed hash means the served contract content
+changed even when a future additive revision keeps the same major contract line.
 
 ## Refusals the gateway must expect
 
@@ -97,8 +98,8 @@ node dist/index.js
 ## Standard §16 checklist status
 
 - [x] Streamable HTTP `/mcp` (+ STDIO default) · [x] Bearer fail-closed ·
-  [x] credentials externalized · [x] explicit tool schemas · [x] read-only
-  `help` versioned/fingerprinted · [x] stable IDs · [x] documented errors ·
-  [x] health defined · [x] bounded timeouts · [x] no credential logging ·
-  [x] `<provider>.<tool>` namespace · [x] business logic stays in provider ·
-  [ ] gateway-side discovery + safe-call integration test (SlncTrZ-MCP lane)
+      [x] credentials externalized · [x] explicit tool schemas · [x] read-only
+      `help` versioned/fingerprinted · [x] stable IDs · [x] documented errors ·
+      [x] health defined · [x] bounded timeouts · [x] no credential logging ·
+      [x] `<provider>.<tool>` namespace · [x] business logic stays in provider ·
+      [ ] gateway-side discovery + safe-call integration test (SlncTrZ-MCP lane)
