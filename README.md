@@ -20,6 +20,15 @@
 > Reports belong to CDT_Engineer Production Domains and must never be
 > absorbed here.
 
+> **CDT certified target:** **KiCad 10.0.6 on Windows 11, CLI/native execution**.
+> This is the version/runtime used for CDT release scoring and acceptance.
+> GUI IPC is an optional capability lane, not a release hard gate. Statements
+> elsewhere in this upstream-derived README about KiCad 9+, other KiCad 10.x
+> builds, Linux or macOS describe upstream compatibility/history unless they are
+> explicitly backed by separate CDT evidence. CDT does not claim those targets
+> certified today; they may be expanded in the future without changing the
+> quality score of the current declared target.
+
 # Discussions. Get in here.
 
 https://github.com/mixelpixx/KiCAD-MCP-Server/discussions/73
