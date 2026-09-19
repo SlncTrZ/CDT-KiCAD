@@ -850,8 +850,11 @@ MCP_TRANSPORT=both node dist/index.js --port 3100 --host 127.0.0.1
   python3 -c "import pcbnew; print(pcbnew.GetBuildVersion())"
   ```
 
-**Node.js 18 or Higher**
+**Node.js**
 
+- Runtime floor: Node.js 18+ for the built provider/runtime dependencies.
+- Source development/test tooling: **Node.js 20.19+** (ESLint 10 + Vitest 4 toolchain).
+- CDT-certified Windows acceptance currently runs on Node.js 24.18.0.
 - Download from [nodejs.org](https://nodejs.org/)
 - Verify: `node --version` and `npm --version`
 
