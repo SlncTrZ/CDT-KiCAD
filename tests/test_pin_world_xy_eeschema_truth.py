@@ -33,14 +33,15 @@ from commands.component_schematic import ComponentManager  # noqa: E402
 from commands.pin_locator import PinLocator  # noqa: E402
 from commands.schematic import SchematicManager  # noqa: E402
 from commands.wire_dragger import WireDragger  # noqa: E402
+from kicad_test_paths import find_kicad_data_path  # noqa: E402
 
 _KICAD_CLI = shutil.which("kicad-cli")
-_DEVICE_LIB = Path("/usr/share/kicad/symbols/Device.kicad_sym")
+_DEVICE_LIB = find_kicad_data_path("symbols", "Device.kicad_sym")
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(_KICAD_CLI is None, reason="kicad-cli not on PATH"),
-    pytest.mark.skipif(not _DEVICE_LIB.exists(), reason="Device lib not installed"),
+    pytest.mark.skipif(_DEVICE_LIB is None, reason="Device lib not installed"),
 ]
 
 
@@ -153,7 +154,7 @@ def _build_mirror_case(tmp: Path, axis: str) -> tuple[Path, dict]:
 
 def _run_netlist(sch_path: Path) -> dict:
     out = sch_path.with_suffix(".net")
-    env = {**os.environ, "KICAD_SYMBOL_DIR": "/usr/share/kicad/symbols"}
+    env = {**os.environ, "KICAD_SYMBOL_DIR": str(_DEVICE_LIB.parent)}
     subprocess.run(
         [
             _KICAD_CLI,

@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "python"))
 
 from commands.hierarchical_place import HierarchicalPlaceCommands  # noqa: E402
+from kicad_test_paths import find_kicad_data_path  # noqa: E402
 
 
 def test_requires_board_path():
@@ -37,13 +38,13 @@ class TestRealPcbnew:
     def test_deoverlaps_real_board(self, tmp_path):
         import pcbnew
 
-        fp_lib = "/usr/share/kicad/footprints/Resistor_SMD.pretty"
-        if not Path(fp_lib).exists():
+        fp_lib = find_kicad_data_path("footprints", "Resistor_SMD.pretty")
+        if fp_lib is None:
             pytest.skip("stock footprint library not installed")
 
         brd = pcbnew.BOARD()
         for ref in ["R1", "R2", "R3"]:
-            fp = pcbnew.FootprintLoad(fp_lib, "R_0805_2012Metric")
+            fp = pcbnew.FootprintLoad(str(fp_lib), "R_0805_2012Metric")
             if fp is None:
                 pytest.skip("could not load test footprint")
             fp.SetParent(brd)

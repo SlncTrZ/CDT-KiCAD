@@ -28,6 +28,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "python"))
 
+from kicad_test_paths import find_kicad_python
+
 # Real KiCad layer IDs — the whole point of #222 is that these are not
 # contiguous. Hard-coded rather than read from pcbnew so the expectation is
 # visible in the test rather than derived from the thing under test.
@@ -213,7 +215,7 @@ class TestSchemaMatchesTheRealTool:
 # Real KiCad round-trip — the check that would have caught the original report
 # --------------------------------------------------------------------------
 
-_KICAD_PY = Path(r"C:\KiCad\10.0\bin\python.exe")
+_KICAD_PY = find_kicad_python()
 
 _ROUNDTRIP = r"""
 import os, re, sys, tempfile
@@ -239,7 +241,7 @@ print("COUNT:", pcbnew.LoadBoard(p).GetCopperLayerCount())
 """
 
 
-@pytest.mark.skipif(not _KICAD_PY.exists(), reason="real KiCad 10 not installed")
+@pytest.mark.skipif(_KICAD_PY is None, reason="real KiCad Python not installed")
 def test_inner_layers_actually_reach_the_file():
     """#222's core complaint: the (layers) table on disk lacked the inner layers."""
     python_root = str(Path(__file__).parent.parent / "python")

@@ -15,7 +15,11 @@ from unittest.mock import MagicMock
 # Make the repository's Python package tree importable in a clean checkout.
 # Individual test modules must not depend on the caller's PYTHONPATH or on an
 # editable install that CI does not perform.
-_PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
+_TEST_ROOT = Path(__file__).resolve().parent
+if str(_TEST_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TEST_ROOT))
+
+_PYTHON_ROOT = _TEST_ROOT.parent / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 

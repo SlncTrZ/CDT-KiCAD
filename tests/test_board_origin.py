@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "python"))
 
 from commands.board.origin import BoardOriginCommands  # noqa: E402
+from kicad_test_paths import find_kicad_data_path  # noqa: E402
 
 
 @pytest.fixture()
@@ -141,13 +142,13 @@ class TestRealPcbnew:
         if shutil.which("kicad-cli") is None:
             pytest.skip("kicad-cli not available")
 
-        fp_lib = "/usr/share/kicad/footprints/Connector_PinHeader_2.54mm.pretty"
-        if not os.path.isdir(fp_lib):
+        fp_lib = find_kicad_data_path("footprints", "Connector_PinHeader_2.54mm.pretty")
+        if fp_lib is None:
             pytest.skip("KiCad standard footprint library not installed")
 
         board_path = str(tmp_path / "t.kicad_pcb")
         board = pcbnew.BOARD()
-        fp = pcbnew.FootprintLoad(fp_lib, "PinHeader_1x01_P2.54mm_Vertical")
+        fp = pcbnew.FootprintLoad(str(fp_lib), "PinHeader_1x01_P2.54mm_Vertical")
         assert fp is not None
         fp.SetPosition(pcbnew.VECTOR2I(30000000, 30000000))  # (30, 30) mm
         board.Add(fp)

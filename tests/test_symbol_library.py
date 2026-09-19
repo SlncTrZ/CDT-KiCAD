@@ -15,9 +15,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "python"))
 
 from commands.library_symbol import SymbolLibraryCommands, SymbolLibraryManager
+from kicad_test_paths import find_kicad_data_path
 
 FIXTURE = Path(__file__).parent / "fixtures" / "Simulation_SPICE_minimal.kicad_sym"
-SPICE_LIB = Path("/usr/share/kicad/symbols/Simulation_SPICE.kicad_sym")
+SPICE_LIB = find_kicad_data_path("symbols", "Simulation_SPICE.kicad_sym")
 
 
 def _manager_for_fixture() -> SymbolLibraryManager:
@@ -91,8 +92,8 @@ class TestGetSymbolInfoHandler:
     """Integration tests against the real system Simulation_SPICE library."""
 
     def test_opamp_via_commands_handler(self):
-        if not SPICE_LIB.exists():
-            pytest.skip(f"System library not found: {SPICE_LIB}")
+        if SPICE_LIB is None:
+            pytest.skip("System Simulation_SPICE library not found")
         manager = SymbolLibraryManager.__new__(SymbolLibraryManager)
         manager._cache_lock = threading.Lock()
         manager.project_path = None
@@ -108,8 +109,8 @@ class TestGetSymbolInfoHandler:
         assert info["sim_pins"] == "1=in+ 2=in- 3=vcc 4=vee 5=out"
 
     def test_pjfet_via_commands_handler(self):
-        if not SPICE_LIB.exists():
-            pytest.skip(f"System library not found: {SPICE_LIB}")
+        if SPICE_LIB is None:
+            pytest.skip("System Simulation_SPICE library not found")
         manager = SymbolLibraryManager.__new__(SymbolLibraryManager)
         manager._cache_lock = threading.Lock()
         manager.project_path = None
