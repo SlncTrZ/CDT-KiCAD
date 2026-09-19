@@ -146,15 +146,28 @@ export function buildNativeVerticalSliceFixture(
       evidence: ["R1/R2 footprints exist on board", "SIG/RET pad nets exist"],
     },
     {
+      id: "board-outline",
+      phase: "board-sync",
+      tool: "add_board_outline",
+      arguments: {
+        shape: "rectangle",
+        params: { x: 10, y: 10, width: 40, height: 20, unit: "mm" },
+      },
+      evidence: ["closed Edge.Cuts rectangle exists", "board contains both footprints and routes"],
+    },
+    {
       id: "place-r1",
       phase: "placement",
       tool: "move_component",
       arguments: {
         reference: "R1",
         position: { x: 20, y: 20, unit: "mm" },
-        rotation: 0,
+        rotation: 90,
       },
-      evidence: ["R1 position reads back as 20 mm, 20 mm"],
+      evidence: [
+        "R1 position reads back as 20 mm, 20 mm",
+        "R1 is rotated 90 degrees so SIG/RET routes remain parallel",
+      ],
     },
     {
       id: "place-r2",
@@ -163,9 +176,12 @@ export function buildNativeVerticalSliceFixture(
       arguments: {
         reference: "R2",
         position: { x: 35, y: 20, unit: "mm" },
-        rotation: 0,
+        rotation: 90,
       },
-      evidence: ["R2 position reads back as 35 mm, 20 mm"],
+      evidence: [
+        "R2 position reads back as 35 mm, 20 mm",
+        "R2 is rotated 90 degrees so SIG/RET routes remain parallel",
+      ],
     },
     {
       id: "route-signal",
@@ -173,6 +189,13 @@ export function buildNativeVerticalSliceFixture(
       tool: "route_pad_to_pad",
       arguments: { fromRef: "R1", fromPad: "1", toRef: "R2", toPad: "1", width: 0.25 },
       evidence: ["route result succeeds", "SIG gains copper connection"],
+    },
+    {
+      id: "route-return",
+      phase: "routing",
+      tool: "route_pad_to_pad",
+      arguments: { fromRef: "R1", fromPad: "2", toRef: "R2", toPad: "2", width: 0.25 },
+      evidence: ["route result succeeds", "RET gains copper connection"],
     },
     {
       id: "erc",
@@ -186,7 +209,7 @@ export function buildNativeVerticalSliceFixture(
       phase: "validation",
       tool: "run_drc",
       arguments: {},
-      evidence: ["DRC command completes", "violation counts captured verbatim"],
+      evidence: ["DRC command completes", "zero DRC violations"],
     },
     {
       id: "save",

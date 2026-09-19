@@ -21,6 +21,7 @@ describe("native release fixture", () => {
       "connect_to_net",
       "generate_netlist",
       "sync_schematic_to_board",
+      "add_board_outline",
       "move_component",
       "route_pad_to_pad",
       "run_erc",
@@ -36,6 +37,27 @@ describe("native release fixture", () => {
     ]) {
       expect(tools, `fixture should exercise ${required}`).toContain(required);
     }
+
+    const outline = fixture.steps.find((step) => step.id === "board-outline");
+    expect(outline).toMatchObject({
+      tool: "add_board_outline",
+      arguments: {
+        shape: "rectangle",
+        params: { x: 10, y: 10, width: 40, height: 20, unit: "mm" },
+      },
+    });
+
+    for (const id of ["place-r1", "place-r2"]) {
+      expect(fixture.steps.find((step) => step.id === id)?.arguments).toMatchObject({ rotation: 90 });
+    }
+
+    expect(fixture.steps.find((step) => step.id === "route-return")).toMatchObject({
+      tool: "route_pad_to_pad",
+      arguments: { fromRef: "R1", fromPad: "2", toRef: "R2", toPad: "2", width: 0.25 },
+    });
+    expect(fixture.steps.find((step) => step.id === "drc")?.evidence).toContain(
+      "zero DRC violations",
+    );
 
     expect(fixture.disposable).toBe(true);
     expect(fixture.environmentRequirements.footprintLibraries).toEqual([
