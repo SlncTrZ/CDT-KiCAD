@@ -71,7 +71,13 @@ describe("negative release fixtures", () => {
         "timeout-late-completion",
       ].sort(),
     );
-    expect(NEGATIVE_RELEASE_FIXTURES.every((fixture) => fixture.hardGate)).toBe(true);
+    const ipcLossFixture = NEGATIVE_RELEASE_FIXTURES.find((fixture) => fixture.id === "ipc-loss");
+    expect(ipcLossFixture?.hardGate).toBe(false);
+    expect(
+      NEGATIVE_RELEASE_FIXTURES.filter((fixture) => fixture.id !== "ipc-loss").every(
+        (fixture) => fixture.hardGate,
+      ),
+    ).toBe(true);
 
     const timeoutFixture = NEGATIVE_RELEASE_FIXTURES.find(
       (fixture) => fixture.id === "timeout-late-completion",

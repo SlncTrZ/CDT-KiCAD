@@ -1651,7 +1651,9 @@ npm run test:coverage
 
 The D12 acceptance tooling prepares reproducible release-proof inputs; it does
 not certify a build by itself. Native evidence must be rerun on the final
-integration HEAD with the target KiCAD build.
+integration HEAD with the target KiCAD build. For the current CDT-certified
+target, CLI/native execution is the release lane; GUI IPC loss remains an
+optional capability check and is not a release hard gate.
 
 ```bash
 # Prepare disposable native + negative fixture plans and their SHA-256 hashes

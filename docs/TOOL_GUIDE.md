@@ -144,9 +144,11 @@ provider execution payload.
 Repository tooling can prepare native/negative fixture plans, weighted score
 reports and evidence manifests, but those artifacts do not certify a build by
 themselves. Native evidence must be rerun against the final integration HEAD on
-the target KiCAD build. Any failed hard gate means `NOT CERTIFIED` regardless
-of weighted score. Evidence manifests reject prompt/credential fields and record
-explicit verification limitations.
+the target KiCAD build. For the current CDT-certified target, CLI/native
+execution is the release lane; GUI IPC loss remains an optional capability
+check rather than a release hard gate. Any failed hard gate means
+`NOT CERTIFIED` regardless of weighted score. Evidence manifests reject
+prompt/credential fields and record explicit verification limitations.
 
 ## Versioning
 

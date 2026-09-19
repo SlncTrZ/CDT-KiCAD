@@ -285,7 +285,7 @@ export interface NegativeReleaseFixture {
     | "bad-auth"
     | "path-escape"
     | "corrupt-checkpoint";
-  hardGate: true;
+  hardGate: boolean;
   setup: string;
   expectedInvariant: string;
   requiredEvidence: string[];
@@ -294,7 +294,7 @@ export interface NegativeReleaseFixture {
 export const NEGATIVE_RELEASE_FIXTURES: readonly NegativeReleaseFixture[] = [
   {
     id: "ipc-loss",
-    hardGate: true,
+    hardGate: false,
     setup: "Start an IPC-pinned session, then make the IPC dependency unavailable.",
     expectedInvariant:
       "IPC-only behavior fails explicitly; the provider must not silently downgrade to SWIG and report success.",
