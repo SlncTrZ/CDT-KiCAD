@@ -66,9 +66,10 @@ waiting instead of a second scheduler/broker.
 
 ## Windows-native deployment (no Docker)
 
-KiCAD (`pcbnew`, IPC UI sync) is Windows-bound, so this provider deploys as
-a native Windows process — no container image is shipped. Standard §13
-Docker expectations do not apply; the equivalent controls below do.
+The currently accepted KiCad native/GUI lane uses a Windows process — no
+container image is shipped. KiCad/pcbnew itself is not inherently Windows-only;
+a Linux lane requires separate acceptance. Standard §13 Docker expectations
+do not apply to this native Windows deployment; equivalent controls follow.
 
 ```powershell
 npm run build
@@ -89,9 +90,10 @@ node dist/index.js
 - Updates without rebuild: `docs\TOOL_GUIDE.md` is read at runtime — it can
   be replaced on disk (read-only ACL recommended); `contract_hash` changes
   accordingly and clients re-fetch `help`.
-- Remote access: keep the provider bound to `127.0.0.1` and terminate
-  TLS/exposure at the edge (reverse proxy / Cloudflare Tunnel); never bind
-  `0.0.0.0` without `KICAD_MCP_TOKEN` set.
+- Remote access: prefer gateway-managed SSH stdio or loopback HTTP over
+  verified private SSH forwarding / authenticated trusted HTTPS. Public
+  edge routing is optional for external clients, not required for LAN RPC.
+  Never bind `0.0.0.0` without `KICAD_MCP_TOKEN` set.
 - Projects live on host paths (`KICAD_PYTHON` auto-detects the KiCAD 10
   bundled interpreter); back up project dirs like any working data.
 
@@ -103,3 +105,13 @@ node dist/index.js
       [x] health defined · [x] bounded timeouts · [x] no credential logging ·
       [x] `<provider>.<tool>` namespace · [x] business logic stays in provider ·
       [ ] gateway-side discovery + safe-call integration test (SlncTrZ-MCP lane)
+
+## Private gateway lifecycle integration
+
+For a split Linux control-plane / Windows native deployment, prefer a private authenticated transport: loopback HTTP over verified SSH forwarding, or gateway-managed SSH stdio where supported. Public edge routing is not required for LAN-native RPC. Use an approved interactive task/worker for GUI-dependent contexts; a conventional Session-0 service is not equivalent. Health remains liveness only.
+
+After native readiness and approved contract/tool-set validation, an authorized controller invokes gateway sync for the registered provider and verifies activation, then the client refreshes tools/list. Sync accepts the discovered tool set; restricted exposure requires explicit approved-set validation/acceptance. Sync does not implicitly register or enable a provider.
+
+For stdio, preserve gateway ownership of the provider child and avoid duplicate launch during probing/activation. Stop first drains/reconciles owned work, protects dirty documents, then detaches/disables the route as authorized. Do not expect sync on a stopped provider to withdraw tools.
+
+This is an integration target, not new lifecycle functionality shipped by this repository. See the [draft lifecycle contract](https://github.com/SlncTrZ/CDT_Engineer/blob/main/docs/EXECUTION_LIFECYCLE_CONTRACT.md), available in the sibling CDT_Engineer checkout before publication.

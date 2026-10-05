@@ -34,11 +34,19 @@ export function registerFreeroutingTools(server: McpServer, callKicadScript: Fun
         .describe(
           "Maximum routing passes for single-attempt mode (default: 20). Ignored when `attempts` > 1; use `passSchedule` instead.",
         ),
-      timeout: z.number().optional().describe("Per-attempt timeout in seconds (default: 300)"),
+      // Cap: same ceiling philosophy as run_drc timeoutSec [10,1800] — one Freerouting pass past 30 min is a hung JVM, not progress.
+      timeout: z
+        .number()
+        .positive()
+        .max(1800)
+        .optional()
+        .describe("Per-attempt timeout in seconds (default: 300, max: 1800)"),
+      // Cap: 10 == len(DEFAULT_PASS_SCHEDULE) — attempt 11+ would rerun an identical --max-passes value while multiplying wall-clock.
       attempts: z
         .number()
         .int()
         .min(1)
+        .max(10)
         .optional()
         .describe(
           "Number of Freerouting runs to try (default: 1 — backward-compatible). When > 1, runs best-of-N: scores each attempt by routing completeness and keeps the SES with the highest score. Recommended: 3–5 for dense boards.",

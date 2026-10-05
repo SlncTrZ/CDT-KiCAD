@@ -1,7 +1,7 @@
 # KiCAD MCP - Current Status Summary
 
-**Date:** 2026-09-01
-**Version:** 2.7.0
+**Date:** 2026-10-05
+**Version:** 2.7.0-cdt.1
 **Phase:** Active development with community contributions
 
 ---
@@ -10,8 +10,8 @@
 
 | Metric                   | Value                       |
 | ------------------------ | --------------------------- |
-| Total MCP Tools          | 229                         |
-| Tools indexed for search | 169 in 15 categories        |
+| Total MCP Tools          | 239                         |
+| Tools indexed for search | 236 in 20 categories        |
 | KiCAD 9.0 Compatible     | Yes (verified)              |
 | Platforms                | Linux, Windows, macOS       |
 | JLCPCB Parts Catalog     | 2.5M+ components            |
@@ -20,10 +20,11 @@
 | Contributors             | 20+                         |
 | MCP Protocol Version     | 2025-06-18                  |
 
-Every tool is callable by name. The 169 figure is the subset that `search_tools`
-and `get_category_tools` can find by keyword; the remaining 60 work but are not
-indexed yet. See [TOOL_INVENTORY.md](TOOL_INVENTORY.md) for the full list, which
-is generated from the source so it cannot drift.
+Every tool is callable by name. 236 tools are indexed across 20 categories for
+keyword search via `search_tools` and `get_category_tools`; the 3 meta-discovery
+controls (`help`, `system_status`, `system_capabilities`) remain intentionally direct-only.
+See [TOOL_INVENTORY.md](TOOL_INVENTORY.md) for the full list, which is generated from the
+source so it cannot drift.
 
 ---
 

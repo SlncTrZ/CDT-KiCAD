@@ -27,6 +27,18 @@ import { ensureKicadSuccess } from "./tools/tool-response.js";
 export const DEFAULT_MAX_QUEUE_DEPTH = 32;
 export const DEFAULT_ENQUEUE_DEADLINE_MS = 120_000;
 
+/**
+ * Fail-closed ceilings for the Node-side Python response buffer.
+ *
+ * Responses are single-line JSON frames; the largest legitimate payloads are
+ * inline base64 board/schematic renders (default 1600×1200 PNG ≈ single-digit
+ * MB), so 32 MiB per frame leaves wide headroom while a runaway worker costs
+ * bounded heap. Lengths count UTF-16 units, which over-counts non-ASCII —
+ * the fail-safe direction for a cap.
+ */
+export const MAX_BRIDGE_LINE_BYTES = 32 * 1024 * 1024;
+export const MAX_BRIDGE_BUFFER_BYTES = 64 * 1024 * 1024;
+
 export type BridgeRuntimeEvent = "completed" | "timeout" | "error" | "rejected";
 
 export interface BridgeRuntimeMetric {
@@ -1191,8 +1203,74 @@ export class KiCADMcpServer {
     logger.debug(`Received data chunk: ${chunk.length} bytes`);
     this.responseBuffer += chunk;
 
+    // An unbounded append is a memory-exhaustion vector: a misbehaving worker
+    // that never emits '\n' would grow the heap without limit. Fail closed —
+    // discard the bytes and fail the pending request with a clear error code.
+    if (this.responseBuffer.length > MAX_BRIDGE_BUFFER_BYTES) {
+      const received = this.responseBuffer.length;
+      this.responseBuffer = "";
+      logger.error(
+        `Bridge response buffer overflow (${received} chars without a complete frame); ` +
+          `discarding and failing the pending request`,
+      );
+      this.abortPendingRequest(
+        new ProviderRuntimeError(
+          "internal_error",
+          false,
+          `KiCAD bridge response exceeded the ${MAX_BRIDGE_BUFFER_BYTES}-char buffer cap ` +
+            `(${received} chars without a complete frame)`,
+          {
+            code: "BRIDGE_RESPONSE_BUFFER_OVERFLOW",
+            cap_chars: MAX_BRIDGE_BUFFER_BYTES,
+            received_chars: received,
+          },
+        ),
+      );
+      return;
+    }
+
     // Try to parse complete JSON responses (may have multiple or partial)
     this.tryParseResponse();
+  }
+
+  /**
+   * Fail-closed abort of the in-flight bridge request: clears its timer,
+   * records the error, leaves a semantic receipt uncertain when a mutation
+   * may have been dispatched, and resumes the queue. Used when the response
+   * channel itself is untrustworthy (oversized frame/buffer), where
+   * correlation with a late response can no longer be relied upon.
+   */
+  private abortPendingRequest(error: ProviderRuntimeError): void {
+    const handler = this.currentRequestHandler;
+    if (!handler) {
+      this.processingRequest = false;
+      setTimeout(() => this.processNextRequest(), 0);
+      return;
+    }
+    clearTimeout(handler.timeoutHandle);
+    this.currentRequestHandler = null;
+    this.processingRequest = false;
+    this.errorCount += 1;
+    if (handler.command && handler.enqueuedAtMs !== undefined) {
+      this.emitBridgeMetric(
+        "error",
+        handler.command,
+        handler.requestId,
+        handler.enqueuedAtMs,
+        handler.startedAtMs,
+        this.now(),
+      );
+    }
+    // The worker may have acted before misbehaving; uncertain is the honest
+    // receipt state, mirroring the execution-timeout path.
+    if (handler.operationId) {
+      this.operationReceipts.markUncertain(handler.operationId, "degraded_uncertain");
+    }
+    if (handler.reconciliationFor) {
+      this.operationReceipts.markUncertain(handler.reconciliationFor, "degraded_uncertain");
+    }
+    handler.reject(error);
+    setTimeout(() => this.processNextRequest(), 0);
   }
 
   /**
@@ -1219,6 +1297,32 @@ export class KiCADMcpServer {
       const line = this.responseBuffer.slice(0, newlineIndex).trim();
       this.responseBuffer = this.responseBuffer.slice(newlineIndex + 1);
       if (!line) continue;
+
+      // A single frame past the cap can never be a legitimate tool result
+      // (see MAX_BRIDGE_LINE_BYTES headroom note). Drop it fail-closed rather
+      // than JSON-parsing tens of megabytes into the heap: the pending request
+      // — whose response this frame may have been — is failed with a clear
+      // error code, and parsing continues with the remaining frames.
+      if (line.length > MAX_BRIDGE_LINE_BYTES) {
+        logger.error(
+          `Discarding oversized Python response frame (${line.length} chars > ` +
+            `${MAX_BRIDGE_LINE_BYTES} cap); failing the pending request`,
+        );
+        this.abortPendingRequest(
+          new ProviderRuntimeError(
+            "internal_error",
+            false,
+            `KiCAD bridge response frame exceeded the ${MAX_BRIDGE_LINE_BYTES}-char ` +
+              `frame cap (${line.length} chars)`,
+            {
+              code: "BRIDGE_RESPONSE_LINE_TOO_LONG",
+              cap_chars: MAX_BRIDGE_LINE_BYTES,
+              received_chars: line.length,
+            },
+          ),
+        );
+        continue;
+      }
 
       let result: any;
       try {

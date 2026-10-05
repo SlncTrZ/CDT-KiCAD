@@ -45,6 +45,26 @@ export const LONG_RUNNING_COMMANDS = [
 export const AUTOROUTE_OVERHEAD_MS = 120_000;
 
 /**
+ * Fail-closed ceilings for `autoroute`, mirroring the zod schema in
+ * `tools/freerouting.ts` and the worker validation in
+ * `python/commands/freerouting.py`. Timeout cap copies the run_drc
+ * `timeoutSec` [10,1800] ceiling; attempts cap equals the built-in
+ * `--max-passes` schedule length, past which runs only repeat themselves.
+ */
+export const AUTOROUTE_MAX_TIMEOUT_SEC = 1800;
+export const AUTOROUTE_MAX_ATTEMPTS = 10;
+
+/**
+ * Hard ceiling on the total Node-side wait for `autoroute`: the worst
+ * legitimate budget (max per-attempt timeout × max attempts + overhead).
+ * Clamping the inputs below already guarantees this, so the cap is a pure
+ * safety net against future arithmetic drift — it can never fire on legal
+ * inputs, and no caller can arm an unbounded wait.
+ */
+export const AUTOROUTE_MAX_BUDGET_MS =
+  AUTOROUTE_MAX_TIMEOUT_SEC * 1000 * AUTOROUTE_MAX_ATTEMPTS + AUTOROUTE_OVERHEAD_MS;
+
+/**
  * How long the Node side waits for `command` before abandoning the request.
  *
  * `autoroute` is computed rather than fixed: its Python side takes a
@@ -58,12 +78,19 @@ export function computeCommandTimeout(command: string, params?: unknown): number
   if (command === "autoroute") {
     const p = (params ?? {}) as Record<string, unknown>;
 
-    const perAttemptSec = toPositiveNumber(p.timeout) ?? 300;
-    const attempts = Math.max(1, Math.floor(toPositiveNumber(p.attempts) ?? 1));
+    // Clamp to the same ceilings the schema and worker enforce, so a caller
+    // who bypasses tool validation (raw bridge, stale client) still cannot
+    // arm an unbounded Node-side wait.
+    const perAttemptSec = Math.min(toPositiveNumber(p.timeout) ?? 300, AUTOROUTE_MAX_TIMEOUT_SEC);
+    const attempts = Math.min(
+      Math.max(1, Math.floor(toPositiveNumber(p.attempts) ?? 1)),
+      AUTOROUTE_MAX_ATTEMPTS,
+    );
 
     const budgetMs = perAttemptSec * 1000 * attempts + AUTOROUTE_OVERHEAD_MS;
-    // Never drop below the blanket long-running allowance.
-    return Math.max(budgetMs, LONG_COMMAND_TIMEOUT_MS);
+    // Never drop below the blanket long-running allowance; never exceed the
+    // worst legitimate budget.
+    return Math.min(Math.max(budgetMs, LONG_COMMAND_TIMEOUT_MS), AUTOROUTE_MAX_BUDGET_MS);
   }
 
   if ((LONG_RUNNING_COMMANDS as readonly string[]).includes(command)) {

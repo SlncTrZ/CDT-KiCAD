@@ -5,6 +5,7 @@ import {
   LONG_COMMAND_TIMEOUT_MS,
   LONG_RUNNING_COMMANDS,
   AUTOROUTE_OVERHEAD_MS,
+  AUTOROUTE_MAX_BUDGET_MS,
 } from "../src/command-timeout.js";
 
 describe("computeCommandTimeout", () => {
@@ -75,6 +76,35 @@ describe("computeCommandTimeout", () => {
 
     it("tolerates a missing params object", () => {
       expect(computeCommandTimeout("autoroute")).toBe(LONG_COMMAND_TIMEOUT_MS);
+    });
+
+    describe("unbound-DoS ceilings (schema + worker enforce the same bounds)", () => {
+      it("clamps per-attempt timeout to the 1800s ceiling", () => {
+        expect(computeCommandTimeout("autoroute", { timeout: 3600 })).toBe(
+          computeCommandTimeout("autoroute", { timeout: 1800 }),
+        );
+      });
+
+      it("clamps attempts to the 10-run ceiling", () => {
+        expect(computeCommandTimeout("autoroute", { timeout: 300, attempts: 99 })).toBe(
+          computeCommandTimeout("autoroute", { timeout: 300, attempts: 10 }),
+        );
+      });
+
+      it("never exceeds the worst legitimate budget", () => {
+        expect(computeCommandTimeout("autoroute", { timeout: 3600, attempts: 99 })).toBe(
+          AUTOROUTE_MAX_BUDGET_MS,
+        );
+        expect(computeCommandTimeout("autoroute", { timeout: 1800, attempts: 10 })).toBe(
+          AUTOROUTE_MAX_BUDGET_MS,
+        );
+      });
+
+      it("still honors budgets below the ceilings", () => {
+        expect(computeCommandTimeout("autoroute", { timeout: 900, attempts: 5 })).toBe(
+          900 * 1000 * 5 + AUTOROUTE_OVERHEAD_MS,
+        );
+      });
     });
   });
 });

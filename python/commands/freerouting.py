@@ -10,6 +10,7 @@ Supports two execution modes:
 """
 
 import logging
+import math
 import os
 import re
 import shutil
@@ -37,6 +38,31 @@ DOCKER_IMAGE = "eclipse-temurin:21-jre"
 # runs to surface a better result than any single fixed value. Ported from
 # morningfire-pcb-automation/scripts/routing/freeroute_runner.py.
 DEFAULT_PASS_SCHEDULE = [50, 60, 65, 70, 75, 80, 85, 90, 55, 95]
+
+# Fail-closed ceilings mirroring the MCP tool schema (src/tools/freerouting.ts)
+# and the Node budget caps (src/command-timeout.ts). Larger asks are rejected,
+# never silently clamped into a longer run.
+AUTOROUTE_MAX_TIMEOUT_SEC = 1800  # same ceiling as run_drc timeoutSec [10,1800]
+AUTOROUTE_MAX_ATTEMPTS = 10  # == len(DEFAULT_PASS_SCHEDULE); attempt 11+ only repeats -mp values
+
+
+def _coerce_autoroute_timeout(raw: Any) -> float:
+    """Validate the per-attempt ``timeout`` (seconds), fail-closed.
+
+    Raises ``ValueError`` for non-numeric, non-positive, non-finite, or
+    over-ceiling values so a caller can never arm an unbounded subprocess wait.
+    """
+    if isinstance(raw, bool):
+        raise ValueError(f"timeout must be a positive number of seconds; got {raw!r}")
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"timeout must be a positive number of seconds; got {raw!r}")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"timeout must be a positive number of seconds; got {raw!r}")
+    if timeout > AUTOROUTE_MAX_TIMEOUT_SEC:
+        raise ValueError(f"timeout must be <= {AUTOROUTE_MAX_TIMEOUT_SEC}s; got {raw!r}")
+    return timeout
 
 
 def _find_java() -> Optional[str]:
@@ -437,7 +463,14 @@ class FreeroutingCommands:
             }
 
         jar_path = params.get("freeroutingJar", DEFAULT_FREEROUTING_JAR)
-        timeout = params.get("timeout", 300)
+        try:
+            timeout = _coerce_autoroute_timeout(params.get("timeout", 300))
+        except ValueError as exc:
+            return {
+                "success": False,
+                "message": "Invalid timeout value",
+                "errorDetails": str(exc),
+            }
         passes = params.get("maxPasses", 20)
 
         # Best-of-N parameters
@@ -455,6 +488,12 @@ class FreeroutingCommands:
                 "success": False,
                 "message": "Invalid attempts value",
                 "errorDetails": "attempts must be >= 1",
+            }
+        if attempts > AUTOROUTE_MAX_ATTEMPTS:
+            return {
+                "success": False,
+                "message": "Invalid attempts value",
+                "errorDetails": (f"attempts must be <= {AUTOROUTE_MAX_ATTEMPTS}; got {attempts}"),
             }
         target_nets = list(params.get("targetNets") or [])
         pass_schedule = list(params.get("passSchedule") or DEFAULT_PASS_SCHEDULE)
