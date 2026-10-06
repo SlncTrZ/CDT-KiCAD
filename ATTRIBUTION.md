@@ -11,6 +11,12 @@ Upstream baseline: `v2.7.0` — STDIO Node/TypeScript + Python (`pcbnew`)
 bridge, 233 registered tools / 173 indexed across 16 categories, 23 dynamic
 resources, Freerouting + JLCPCB + Digi-Key integrations.
 
+Fork today: `2.7.0-cdt.1` — 239 registered tools / 236 indexed across
+20 categories (204 routed + 39 direct essentials with 7 intentional overlaps;
+the 3 meta-discovery controls `list_tool_categories` / `get_category_tools` /
+`search_tools` stay intentionally direct-only). Provider contract
+`cdt-kicad-contract-v2`. See `docs/TOOL_INVENTORY.md` (generated).
+
 ## What the fork changes (and why)
 
 CDT-KiCAD keeps 100% of upstream ECAD execution mechanics and adapts the

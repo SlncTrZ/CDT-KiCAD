@@ -1,8 +1,11 @@
 # KiCAD IPC Backend Implementation Status
 
-**Status:** Under Active Development and Testing
-**Date:** 2026-03-21
-**KiCAD Version:** 9.0+
+**Status:** Functional — optional capability lane, not a release hard gate
+(pending separate certification; the certified release lane is CLI-native)
+**Date:** 2026-10-06
+**Code HEAD:** `ee8eb50` (branch `master`)
+**KiCAD Version:** 9.0+ GUI (upstream compat range; CDT-certified target is
+KiCad 10.0.6 CLI-native on Windows 11 — GUI IPC needs no GUI for release)
 **kicad-python Version:** 0.5.0+
 
 ---
@@ -31,11 +34,13 @@ connect to IPC.
 
 ## Implemented IPC Commands
 
-The following MCP commands have IPC handlers:
+The following 25 MCP commands have IPC handlers
+(`IPC_CAPABLE_COMMANDS` in `python/kicad_interface.py`):
 
 | Command                    | IPC Handler                     | Status               |
 | -------------------------- | ------------------------------- | -------------------- |
 | `route_trace`              | `_ipc_route_trace`              | Implemented          |
+| `route_arc_trace`          | `_ipc_route_arc_trace`          | Implemented          |
 | `add_via`                  | `_ipc_add_via`                  | Implemented          |
 | `add_net`                  | `_ipc_add_net`                  | Implemented          |
 | `delete_trace`             | `_ipc_delete_trace`             | Falls back to SWIG   |
@@ -56,6 +61,8 @@ The following MCP commands have IPC handlers:
 | `delete_component`         | `_ipc_delete_component`         | Implemented          |
 | `get_component_list`       | `_ipc_get_component_list`       | Implemented          |
 | `get_component_properties` | `_ipc_get_component_properties` | Implemented          |
+| `set_footprint_type`       | `_ipc_set_footprint_type`       | Implemented          |
+| `add_component_3d_model`   | `_ipc_add_component_3d_model`   | Implemented          |
 | `save_project`             | `_ipc_save_project`             | Implemented          |
 
 ### Implemented Backend Features
@@ -169,6 +176,13 @@ until it is reopened:
   KiCad and call `open_project` again.
 - An **ipc-pinned session falls back to swig** if the IPC connection drops
   (e.g. the GUI is closed); the board is reloaded from its last on-disk state.
+- Session state is one of `none | swig | ipc | degraded_uncertain`: an
+  IPC-owned session that loses IPC stays IPC-owned and becomes
+  `degraded_uncertain` — mutations then fail closed with typed
+  `provider_unavailable` instead of silently rerouting through SWIG.
+  `reconnect_backend` restores it once the live KiCad document identity
+  matches the pinned board; `rebind_backend_session` performs an explicit
+  ownership transfer (IPC→SWIG requires `confirmDiscardLiveState=true`).
 - `get_backend_state` reports the pin as `sessionBackend` /
   `sessionBoardPath`, and its `backend` field reflects the session pin (not
   just connectivity) whenever a project is loaded.
@@ -283,4 +297,4 @@ python/
 
 ---
 
-**Last Updated:** 2026-03-21
+**Last Updated:** 2026-10-06 (code HEAD `ee8eb50`; 25 IPC-capable commands, session pinning + `degraded_uncertain` per code)

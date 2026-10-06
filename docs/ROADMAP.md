@@ -25,7 +25,7 @@
 
 - [x] Tool router pattern -- 70% AI context reduction (the gating half was
       rolled back in 2026-03; see ROUTER_ARCHITECTURE.md)
-- [x] IPC backend for real-time KiCAD UI synchronization (21 commands)
+- [x] IPC backend for real-time KiCAD UI synchronization (25 IPC-capable commands)
 - [x] Hybrid SWIG/IPC backend with automatic fallback
 - [x] Comprehensive Windows support with automated setup
 
@@ -63,7 +63,7 @@
 
 ### Documentation Overhaul (In Progress)
 
-- [x] Generated tool inventory covering all 229 tools (`npm run docs:tools`)
+- [x] Generated tool inventory covering all 239 tools (`npm run docs:tools`)
 - [ ] Per-feature documentation for the tools that need more than one line
 - [ ] Architecture guide for contributors
 - [ ] End-to-end PCB design workflow guide

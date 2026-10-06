@@ -792,17 +792,22 @@ See [Footprint and Symbol Creator Guide](docs/FOOTPRINT_SYMBOL_CREATOR_GUIDE.md)
 
 ### Freerouting Autorouter (4 tools)
 
-- `autoroute` - Run Freerouting autorouter (DSN export, route, SES import)
+- `autoroute` - Run Freerouting autorouter (DSN export, route, SES import;
+  bounded: per-attempt `timeout` ≤ 1800 s, `attempts` ≤ 10)
 - `export_dsn` / `import_ses` - Manual Specctra DSN/SES workflow
 - `check_freerouting` - Verify Java and Freerouting availability
 
 See [Freerouting Guide](docs/FREEROUTING_GUIDE.md) for setup and usage.
 
-### UI Management (3 tools)
+### UI Management (5 tools)
 
 - `check_kicad_ui` - Check if KiCAD is running
 - `launch_kicad_ui` - Launch KiCAD application
 - `get_backend_state` - Report which backend (IPC or SWIG) is in use
+- `reconnect_backend` - Restore an IPC-owned session after the live KiCad
+  document identity matches the pinned board
+- `rebind_backend_session` - Explicit backend ownership transfer
+  (IPC→SWIG requires `confirmDiscardLiveState=true`)
 
 ### Parts Registry (3 tools)
 

@@ -305,7 +305,7 @@ See [SVG Import Guide](SVG_IMPORT_GUIDE.md) for requirements and tips.
 
 ## Related Documentation
 
-- [Tool Inventory](TOOL_INVENTORY.md) -- generated list of all 229 tools
+- [Tool Inventory](TOOL_INVENTORY.md) -- generated list of all 239 tools
 - [Schematic Tools Reference](SCHEMATIC_TOOLS_REFERENCE.md) -- detailed schematic tool docs
 - [Routing Tools Reference](ROUTING_TOOLS_REFERENCE.md) -- detailed routing tool docs
 - [Freerouting Guide](FREEROUTING_GUIDE.md) -- autorouter setup and usage

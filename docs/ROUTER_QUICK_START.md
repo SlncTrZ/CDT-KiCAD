@@ -5,9 +5,9 @@ word "router" in the name is historical: see the note below.)_
 
 ## What is tool discovery?
 
-The KiCAD MCP Server registers 229 tools. Your assistant can call any of them by
-name at any time. To help it find the right one, 169 of those tools are indexed
-into 15 categories that can be searched by keyword.
+The KiCAD MCP Server registers 239 tools. Your assistant can call any of them by
+name at any time. To help it find the right one, 236 of those tools are indexed
+into 20 categories that can be searched by keyword.
 
 > **This is a search catalogue, not a gate.** Every tool is registered directly
 > and is already visible to your assistant, so discovery saves no context. The
@@ -111,7 +111,7 @@ Related reading:
 
 - [ROUTER_ARCHITECTURE.md](ROUTER_ARCHITECTURE.md) - the original gated design
   and why it was rolled back
-- [TOOL_INVENTORY.md](TOOL_INVENTORY.md) - the generated catalogue of all 229
+- [TOOL_INVENTORY.md](TOOL_INVENTORY.md) - the generated catalogue of all 239
   tools
 
 ## A note on context usage

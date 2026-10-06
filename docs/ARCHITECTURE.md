@@ -143,8 +143,8 @@ call any tool by name. The registry exists to help an assistant _find_ a tool it
 does not already know about:
 
 - `registry.ts` defines the categories and the small "essentials" list that
-  `search_tools` ranks first. It currently indexes 169 of the 229 registered
-  tools across 15 categories.
+  `search_tools` ranks first. It currently indexes 236 of the 239 registered
+  tools across 20 categories.
 - `router.ts` provides 3 discovery tools: `list_tool_categories`,
   `get_category_tools` and `search_tools`.
 - Nothing is hidden behind a dispatcher. An earlier design routed calls through
@@ -313,7 +313,7 @@ Key test files:
 ## Key Design Decisions
 
 - **TypeScript + Python split**: TypeScript handles MCP protocol (well-supported SDK), Python handles KiCAD (only available API)
-- **Keyword discovery instead of routing**: all 229 tools stay individually callable; the registry indexes 169 of them so `search_tools` can find one without the client reading every schema
+- **Keyword discovery instead of routing**: all 239 tools stay individually callable; the registry indexes 236 of them so `search_tools` can find one without the client reading every schema
 - **Auto-save**: Every board-modifying SWIG operation auto-saves to prevent data loss
 - **Dynamic symbol loading**: Works around kicad-skip's inability to create symbols from scratch
 - **S-expression wire injection**: Works around kicad-skip's inability to create wires

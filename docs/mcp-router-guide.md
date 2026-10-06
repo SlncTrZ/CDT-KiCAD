@@ -24,7 +24,7 @@ When your MCP server exposes too many tools:
 3. **Context starvation**: Less room for actual conversation and results
 4. **Accuracy degradation**: More tools = more confusion about which to use
 
-Real-world example: A KiCAD MCP server with 229 tools consumes well over 100K tokens of schema. An IDA Pro MCP server could easily hit 100+ tools.
+Real-world example: A KiCAD MCP server with 239 tools consumes well over 100K tokens of schema. An IDA Pro MCP server could easily hit 100+ tools.
 
 ---
 
@@ -1150,7 +1150,7 @@ See [Tool Search Tool Documentation](https://platform.claude.com/docs/en/agents-
 
 ### Example Implementations
 
-- [KiCAD MCP Server](https://github.com/mixelpixx/KiCAD-MCP-Server) - 229 tools with natural language PCB design
+- [KiCAD MCP Server](https://github.com/mixelpixx/KiCAD-MCP-Server) - 239 tools with natural language PCB design
 - [MCP Servers Repository](https://github.com/modelcontextprotocol/servers) - Official reference implementations
 
 ---

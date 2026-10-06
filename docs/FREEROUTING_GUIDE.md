@@ -101,7 +101,8 @@ Run the full autorouting workflow (export DSN, route, import SES).
 | `boardPath` | string | No | Current board | Path to .kicad_pcb file |
 | `freeroutingJar` | string | No | ~/.kicad-mcp/freerouting.jar | Path to freerouting.jar |
 | `maxPasses` | number | No | 20 | Maximum routing passes |
-| `timeout` | number | No | 300 | Timeout in seconds |
+| `timeout` | number | No | 300 | Per-attempt timeout in seconds (max: 1800) |
+| `attempts` | number | No | 1 | Best-of-N runs, each with a cycled `--max-passes` value (max: 10) |
 
 **Example:**
 
