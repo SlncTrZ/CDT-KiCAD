@@ -5,11 +5,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import express from "express";
-import { spawn, exec, execSync, ChildProcess } from "child_process";
+import { spawn, exec, ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
-import { existsSync, readdirSync } from "fs";
+import { existsSync } from "fs";
 import { join, dirname } from "path";
 import { logger } from "./logger.js";
+import { LocalKiCADRuntimeAdapter } from "./runtime/local-kicad-runtime-adapter.js";
+import { deriveKiCadSitePackages, findPythonExecutable } from "./runtime/python-discovery.js";
 import { computeCommandTimeout, DEFAULT_COMMAND_TIMEOUT_MS } from "./command-timeout.js";
 import { PROVIDER_ID, PROVIDER_VERSION } from "./provider-contract.js";
 import { createContractToolTarget } from "./tool-contract-boundary.js";
@@ -161,177 +163,11 @@ import { registerRoutingPrompts } from "./prompts/routing.js";
 import { registerDesignPrompts } from "./prompts/design.js";
 import { registerFootprintPrompts } from "./prompts/footprint.js";
 
-function getWindowsKiCadPythonCandidates(): string[] {
-  const roots = [
-    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Programs", "KiCad") : undefined,
-    "C:\\Program Files\\KiCad",
-    "C:\\Program Files (x86)\\KiCad",
-  ].filter((root): root is string => Boolean(root));
-
-  const candidates: string[] = [];
-
-  for (const root of roots) {
-    if (!existsSync(root)) {
-      continue;
-    }
-
-    try {
-      const versionDirs = readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-
-      for (const versionDir of versionDirs) {
-        candidates.push(join(root, versionDir, "bin", "python.exe"));
-      }
-    } catch (error: any) {
-      logger.warn(`Failed to inspect KiCAD install directory ${root}: ${error.message}`);
-    }
-  }
-
-  return [...new Set(candidates)];
-}
-
 /**
- * Derive the KiCAD bundled-Python site-packages path for a detected python.exe,
- * so PYTHONPATH follows the *same* install we picked (any version, Program Files
- * or per-user %LOCALAPPDATA%) instead of a hardcoded KiCad 9.0 path.
- *
- * KiCAD on Windows installs python at `<root>/<version>/bin/python.exe`, with
- * pcbnew under `<...>/bin/Lib/site-packages` (older/alt layouts use
- * `<version>/lib/python3/dist-packages`). Returns the first existing candidate,
- * or undefined if pythonExe isn't a KiCAD bundled python.
+ * Python/KiCad discovery lives in src/runtime/python-discovery.ts (single
+ * canonical implementation shared with the workstation agent). The local
+ * server path below consumes it without behavior change.
  */
-function deriveKiCadSitePackages(pythonExe: string): string | undefined {
-  if (process.platform !== "win32") return undefined;
-  const lower = pythonExe.toLowerCase();
-  if (!lower.endsWith("python.exe") || !lower.includes("kicad")) return undefined;
-  const binDir = dirname(pythonExe); // <root>/<version>/bin
-  const versionDir = dirname(binDir); // <root>/<version>
-  const candidates = [
-    join(binDir, "Lib", "site-packages"),
-    join(versionDir, "lib", "python3", "dist-packages"),
-  ];
-  return candidates.find((p) => existsSync(p));
-}
-
-/**
- * Find the Python executable to use.
- * Prioritizes project venvs, then explicit overrides, then KiCAD-bundled Python
- * before falling back to system Python.
- */
-function findPythonExecutable(scriptPath: string): string {
-  const isWindows = process.platform === "win32";
-  const isMac = process.platform === "darwin";
-  const isLinux = !isWindows && !isMac;
-
-  // Get the project root (parent of the python/ directory)
-  const projectRoot = dirname(dirname(scriptPath));
-
-  // Check for virtual environment
-  const venvPaths = [
-    join(projectRoot, "venv", isWindows ? "Scripts" : "bin", isWindows ? "python.exe" : "python"),
-    join(projectRoot, ".venv", isWindows ? "Scripts" : "bin", isWindows ? "python.exe" : "python"),
-  ];
-
-  for (const venvPath of venvPaths) {
-    if (existsSync(venvPath)) {
-      logger.info(`Found virtual environment Python at: ${venvPath}`);
-      return venvPath;
-    }
-  }
-
-  // Allow override via KICAD_PYTHON environment variable (any platform)
-  if (process.env.KICAD_PYTHON) {
-    logger.info(`Using KICAD_PYTHON environment variable: ${process.env.KICAD_PYTHON}`);
-    return process.env.KICAD_PYTHON;
-  }
-
-  // Platform-specific KiCAD bundled Python detection
-  if (isWindows) {
-    // Windows: Always prefer KiCAD's bundled Python (pcbnew.pyd is compiled for it).
-    for (const kicadPython of getWindowsKiCadPythonCandidates()) {
-      if (existsSync(kicadPython)) {
-        logger.info(`Found KiCAD bundled Python at: ${kicadPython}`);
-        return kicadPython;
-      }
-    }
-  } else if (isMac) {
-    // macOS: Try KiCAD's bundled Python (check multiple versions and locations)
-    const kicadPythonVersions = ["3.9", "3.10", "3.11", "3.12", "3.13"];
-
-    // Standard KiCAD installation paths
-    const kicadAppPaths = [
-      "/Applications/KiCad/KiCad.app",
-      "/Applications/KiCAD/KiCad.app", // Alternative capitalization
-      `${process.env.HOME}/Applications/KiCad/KiCad.app`, // User Applications folder
-    ];
-
-    // Check all KiCAD app locations with all Python versions
-    for (const appPath of kicadAppPaths) {
-      for (const version of kicadPythonVersions) {
-        const kicadPython = `${appPath}/Contents/Frameworks/Python.framework/Versions/${version}/bin/python3`;
-        if (existsSync(kicadPython)) {
-          logger.info(`Found KiCAD bundled Python at: ${kicadPython}`);
-          return kicadPython;
-        }
-      }
-    }
-
-    // Fallback to Homebrew Python (if pcbnew is installed via pip)
-    const homebrewPaths = [
-      "/opt/homebrew/bin/python3", // Apple Silicon
-      "/usr/local/bin/python3", // Intel Mac
-      "/opt/homebrew/bin/python3.12",
-      "/opt/homebrew/bin/python3.11",
-    ];
-
-    for (const path of homebrewPaths) {
-      if (existsSync(path)) {
-        logger.info(`Found Homebrew Python at: ${path} (ensure pcbnew is importable)`);
-        return path;
-      }
-    }
-  } else if (isLinux) {
-    // Linux: Try KiCAD bundled Python locations first
-    const linuxKicadPaths = [
-      "/usr/lib/kicad/bin/python3",
-      "/usr/local/lib/kicad/bin/python3",
-      "/opt/kicad/bin/python3",
-    ];
-
-    for (const path of linuxKicadPaths) {
-      if (existsSync(path)) {
-        logger.info(`Found KiCAD bundled Python at: ${path}`);
-        return path;
-      }
-    }
-
-    // Resolve system python3 to full path using 'which'
-    try {
-      const result = execSync("which python3", { encoding: "utf-8" }).trim();
-      if (result && existsSync(result)) {
-        logger.info(`Resolved system Python via which: ${result}`);
-        return result;
-      }
-    } catch (e) {
-      logger.warn("Failed to resolve python3 via which command");
-    }
-
-    // Fallback to common system paths
-    const systemPaths = ["/usr/bin/python3", "/bin/python3"];
-    for (const path of systemPaths) {
-      if (existsSync(path)) {
-        logger.info(`Found system Python at: ${path}`);
-        return path;
-      }
-    }
-  }
-
-  // Default to system Python (last resort)
-  logger.info("Using system Python (no venv found)");
-  return isWindows ? "python.exe" : "python3";
-}
 
 /**
  * KiCAD MCP Server class
@@ -398,6 +234,16 @@ export class KiCADMcpServer {
   private bridgeStarted: boolean = false;
 
   /**
+   * K1 provider/execution seam. Local child-process dispatch stays the
+   * default implementation; the bound dispatch below is the same
+   * callKicadScript queue (receipts, correlation, timeouts) with identical
+   * behavior. Remote transports compose against this port, never against
+   * server internals. NOTE: per-call `timeoutMs` passed via the port is not
+   * yet plumbed into the queue — the command-timeout policy still applies.
+   */
+  private readonly runtimePort: LocalKiCADRuntimeAdapter;
+
+  /**
    * Constructor for the KiCAD MCP Server
    * @param kicadScriptPath Path to the Python KiCAD interface script
    * @param logLevel Log level for the server
@@ -449,6 +295,16 @@ export class KiCADMcpServer {
 
     // Register tools, resources, and prompts
     this.registerAll();
+
+    // K1 seam: local adapter delegates to this instance's dispatch queue.
+    this.runtimePort = new LocalKiCADRuntimeAdapter((command, params) =>
+      this.callKicadScript(command, params),
+    );
+  }
+
+  /** Provider-facing runtime seam (local child-process dispatch by default). */
+  public getRuntimePort(): LocalKiCADRuntimeAdapter {
+    return this.runtimePort;
   }
 
   /**
