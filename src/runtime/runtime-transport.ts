@@ -25,6 +25,7 @@
  * `formatKicadException` classifies them exactly like bridge errors.
  */
 
+import { Buffer } from "node:buffer";
 import { randomUUID, timingSafeEqual } from "crypto";
 import type { KiCADRuntimePort } from "./kicad-runtime-port.js";
 
@@ -255,15 +256,44 @@ async function httpJson(
       body: init.body,
       signal: controller.signal,
     });
-    const raw = await response.text();
-    if (raw.length > MAX_TRANSPORT_RESPONSE_BYTES) {
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > MAX_TRANSPORT_RESPONSE_BYTES) {
+      controller.abort();
       throw new RuntimeTransportFailure(
         "internal_error",
         false,
-        `runtime response oversized (${raw.length} chars); discarded without trust`,
+        `runtime response oversized (${contentLength} bytes); discarded without trust`,
         { code: "TRANSPORT_RESPONSE_TOO_LARGE" },
       );
     }
+    if (!response.body) {
+      return { status: response.status, raw: "" };
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytesReceived = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          bytesReceived += value.byteLength;
+          if (bytesReceived > MAX_TRANSPORT_RESPONSE_BYTES) {
+            controller.abort();
+            throw new RuntimeTransportFailure(
+              "internal_error",
+              false,
+              `runtime response oversized (>${MAX_TRANSPORT_RESPONSE_BYTES} bytes); discarded without trust`,
+              { code: "TRANSPORT_RESPONSE_TOO_LARGE" },
+            );
+          }
+          chunks.push(value);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const raw = Buffer.concat(chunks).toString("utf-8");
     return { status: response.status, raw };
   } catch (error) {
     if (error instanceof RuntimeTransportFailure) throw error;

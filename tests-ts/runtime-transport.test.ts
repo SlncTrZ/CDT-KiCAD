@@ -176,4 +176,26 @@ describe("K2 remote runtime transport over loopback stub", () => {
       },
     );
   });
+
+  it("enforces UTF-8 byte limit on responses, rejecting responses that exceed 4 MiB", async () => {
+    // 2.5 million 2-byte characters: 2.5M chars (< 4M char cap) but 5.0 MiB UTF-8 (> 4 MiB byte cap)
+    const multibytePayload = "é".repeat(2_500_000);
+    await withStub(
+      (_request, response) => {
+        const raw = JSON.stringify({ ok: true, result: multibytePayload });
+        const bytes = Buffer.byteLength(raw, "utf-8");
+        response.writeHead(200, {
+          "content-type": "application/json",
+          "content-length": String(bytes),
+        });
+        response.end(raw);
+      },
+      async (baseUrl) => {
+        const transport = new RemoteRuntimeTransport(baseUrl, "secret");
+        await expect(transport.call("get_backend_state")).rejects.toMatchObject({
+          message: expect.stringContaining("TRANSPORT_RESPONSE_TOO_LARGE"),
+        });
+      },
+    );
+  });
 });

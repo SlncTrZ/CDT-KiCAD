@@ -158,19 +158,25 @@ export class WorkstationKiCADRuntimeAgent {
 
   private send(response: ServerResponse, status: number, payload: Record<string, unknown>): void {
     const raw = JSON.stringify(payload);
-    if (raw.length > MAX_TRANSPORT_RESPONSE_BYTES) {
-      response.writeHead(500, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify({
-          ok: false,
-          error_code: "oversized",
-          error_message: "agent response oversized; discarded without trust",
-          generation: this.generation,
-        }),
-      );
+    const bytes = Buffer.byteLength(raw, "utf-8");
+    if (bytes > MAX_TRANSPORT_RESPONSE_BYTES) {
+      const errPayload = JSON.stringify({
+        ok: false,
+        error_code: "oversized",
+        error_message: `agent response oversized (${bytes} bytes); discarded without trust`,
+        generation: this.generation,
+      });
+      response.writeHead(500, {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(errPayload, "utf-8")),
+      });
+      response.end(errPayload);
       return;
     }
-    response.writeHead(status, { "content-type": "application/json" });
+    response.writeHead(status, {
+      "content-type": "application/json",
+      "content-length": String(bytes),
+    });
     response.end(raw);
   }
 
