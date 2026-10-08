@@ -177,6 +177,58 @@ describe("K2 remote runtime transport over loopback stub", () => {
     );
   });
 
+
+  it("refuses multibyte requests by UTF-8 bytes before dispatch", async () => {
+    let dispatches = 0;
+    await withStub(
+      (_request, response) => {
+        dispatches += 1;
+        json(response, 200, { ok: true, result: {}, generation: "g1" });
+      },
+      async (baseUrl) => {
+        const transport = new RemoteRuntimeTransport(baseUrl, "secret");
+        await expect(transport.call("move_component", { text: "汉".repeat(100_000) }))
+          .rejects.toBeInstanceOf(RuntimeOpRefusedError);
+        expect(dispatches).toBe(0);
+      },
+    );
+  });
+
+  it.each([undefined, null, "", 9, false, "other"])(
+    "rejects unbound success generation %s without changing the pin",
+    async (generation) => {
+      let dispatches = 0;
+      await withStub(
+        (_request, response, body) => {
+          dispatches += 1;
+          expect(JSON.parse(body).expected_generation).toBe("g1");
+          json(response, 200, { ok: true, result: { committed: true }, generation });
+        },
+        async (baseUrl) => {
+          const transport = new RemoteRuntimeTransport(baseUrl, "secret");
+          const error = await transport.call("move_component", {}, { expectedGeneration: "g1" })
+            .catch((failure: unknown) => failure);
+          expect(error).toBeInstanceOf(RuntimeGenerationMismatchError);
+          expect(error).toMatchObject({ retryable: false, details: { completion_unknown: true } });
+          expect(dispatches).toBe(1);
+        },
+      );
+    },
+  );
+
+  it.each(["{", "null", "[]", "{}", '{"ok":"true","result":{}}'])(
+    "reports malformed post-dispatch envelope %s as uncertain",
+    async (raw) => {
+      await withStub(
+        (_request, response) => { response.writeHead(200); response.end(raw); },
+        async (baseUrl) => {
+          const transport = new RemoteRuntimeTransport(baseUrl, "secret");
+          await expect(transport.call("move_component")).rejects.toBeInstanceOf(RuntimeUncertainError);
+        },
+      );
+    },
+  );
+
   it("enforces UTF-8 byte limit on responses, rejecting responses that exceed 4 MiB", async () => {
     // 2.5 million 2-byte characters: 2.5M chars (< 4M char cap) but 5.0 MiB UTF-8 (> 4 MiB byte cap)
     const multibytePayload = "é".repeat(2_500_000);

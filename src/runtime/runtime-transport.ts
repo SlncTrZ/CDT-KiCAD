@@ -103,8 +103,11 @@ export class RuntimeUncertainError extends RuntimeTransportFailure {
 }
 
 export class RuntimeGenerationMismatchError extends RuntimeTransportFailure {
-  constructor(message: string) {
-    super("provider_unavailable", false, message, { code: "GENERATION_MISMATCH" });
+  constructor(message: string, completionUnknown = false) {
+    super("provider_unavailable", false, message, {
+      code: "GENERATION_MISMATCH",
+      ...(completionUnknown ? { completion_unknown: true } : {}),
+    });
     this.name = "RuntimeGenerationMismatchError";
   }
 }
@@ -136,9 +139,10 @@ export function checkTransportDeadline(deadlineMs: number | undefined): number {
 
 export function checkTransportRequestSize(payload: unknown): void {
   const raw = JSON.stringify(payload) ?? "";
-  if (raw.length > MAX_TRANSPORT_REQUEST_BYTES) {
+  const bytes = Buffer.byteLength(raw, "utf-8");
+  if (bytes > MAX_TRANSPORT_REQUEST_BYTES) {
     throw new RuntimeOpRefusedError(
-      `runtime request oversized: ${raw.length} chars > ${MAX_TRANSPORT_REQUEST_BYTES}`,
+      `runtime request oversized: ${bytes} bytes > ${MAX_TRANSPORT_REQUEST_BYTES}`,
     );
   }
 }
@@ -333,7 +337,10 @@ function decodeEnvelope(
   try {
     payload = JSON.parse(raw || "{}") as Record<string, unknown>;
   } catch {
-    throw new RuntimeTransportFailure("internal_error", false, `malformed runtime response for op ${JSON.stringify(op)}`);
+    throw new RuntimeUncertainError(`malformed runtime response for op ${JSON.stringify(op)}; completion is unknown`);
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload["ok"] !== "boolean") {
+    throw new RuntimeUncertainError(`malformed runtime envelope for op ${JSON.stringify(op)}; completion is unknown`);
   }
   if (payload["ok"] !== true) {
     const code = String(payload["error_code"] || "error");
@@ -363,11 +370,13 @@ function decodeEnvelope(
   }
   if (
     typeof expectedGeneration === "string" &&
-    typeof payload["generation"] === "string" &&
-    payload["generation"] !== expectedGeneration
+    (typeof payload["generation"] !== "string" ||
+      !payload["generation"].trim() ||
+      payload["generation"] !== expectedGeneration)
   ) {
     throw new RuntimeGenerationMismatchError(
       `runtime generation mismatch for op ${JSON.stringify(op)}; result discarded`,
+      true,
     );
   }
   return payload["result"];
