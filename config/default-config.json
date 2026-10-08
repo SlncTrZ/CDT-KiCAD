@@ -1,0 +1,12 @@
+{
+  "name": "cdt-kicad",
+  "version": "2.7.0-cdt.1",
+  "description": "CDT-KiCAD generic ECAD execution engine (SlncTrZ provider: kicad)",
+  "pythonPath": "",
+  "kicadPath": "",
+  "logLevel": "info",
+  "logDir": "",
+  "transport": "stdio",
+  "host": "127.0.0.1",
+  "port": 3100
+}

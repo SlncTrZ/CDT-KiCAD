@@ -1,0 +1,56 @@
+# CDT-KiCAD CI
+#
+# Fast deterministic contract/unit lanes, Linux compile sanity, and the full
+# Python behavioral suite on Windows. Native pcbnew/IPC acceptance is intentionally
+# separate: .github/workflows/native-windows.yml requires a dedicated
+# self-hosted Windows + KiCad runner and must not be inferred from this CI.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint:ts
+      - run: npm run test:ts
+      - run: npm run docs:tools:check
+      - run: npm run test:queue-load
+
+  python-compile:
+    # Cheap cross-platform syntax sanity. This is not behavioral/native PASS.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m compileall -q python scripts/download_jlcpcb.py
+
+  python-behavioral:
+    # The suite contains Windows-path/native integration assumptions, so the
+    # full behavioral gate runs on its proper OS rather than pretending a
+    # Linux collection failure is useful coverage.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m compileall -q python scripts/download_jlcpcb.py
+      - name: Full behavioral suite (verified baseline quarantines only)
+        run: python scripts/run-python-behavioral.py

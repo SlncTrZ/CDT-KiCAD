@@ -1,0 +1,38 @@
+name: native-windows-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_id:
+        description: "Immutable native acceptance fixture identity"
+        required: true
+        type: string
+
+jobs:
+  native-kicad:
+    # This lane is intentionally not GitHub-hosted: PASS requires a real,
+    # interactive Windows machine with KiCad/pcbnew installed.
+    runs-on: [self-hosted, Windows, X64, kicad]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Native lifecycle + reconnect acceptance
+        # The self-hosted runner must have a durable provider credential
+        # (PowerShell SecretManagement kicad_mcp_token is preferred). A
+        # step-scoped env secret cannot survive a Task Scheduler restart.
+        shell: powershell
+        run: |
+          .\scripts\native-acceptance.ps1 `
+            -FixtureId "${{ inputs.fixture_id }}" `
+            -OutputPath "native-acceptance.json"
+      - name: Upload exact native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdt-kicad-native-acceptance-${{ github.sha }}
+          path: native-acceptance.json
+          if-no-files-found: warn
