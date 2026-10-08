@@ -419,8 +419,6 @@ rotation = module.GetOrientation().AsDegrees()
 ## Related Documentation
 
 - [TOOL_INVENTORY.md](TOOL_INVENTORY.md) - generated catalogue of every tool
-- [ROADMAP.md](ROADMAP.md) - planned work
-- [STATUS_SUMMARY.md](STATUS_SUMMARY.md) - current implementation status
 - [FOOTPRINT_SYMBOL_CREATOR_GUIDE.md](FOOTPRINT_SYMBOL_CREATOR_GUIDE.md) - creating custom parts
 - [KiCAD Documentation](https://docs.kicad.org/9.0/en/pcbnew/pcbnew.html) - official KiCAD docs
 

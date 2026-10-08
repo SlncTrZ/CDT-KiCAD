@@ -291,7 +291,6 @@ python/
 
 ## Related Documentation
 
-- [ROADMAP.md](./ROADMAP.md) - Project roadmap
 - [REALTIME_WORKFLOW.md](./REALTIME_WORKFLOW.md) - Collaboration workflows
 - [kicad-python docs](https://docs.kicad.org/kicad-python-main/) - Official API docs
 

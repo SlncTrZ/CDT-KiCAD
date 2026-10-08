@@ -427,8 +427,6 @@ The KiCAD MCP Server successfully enables paired circuit board design between AI
 ## Related Documentation
 
 - [LIBRARY_INTEGRATION.md](./LIBRARY_INTEGRATION.md) - Component library system
-- [STATUS_SUMMARY.md](./STATUS_SUMMARY.md) - Current implementation status
-- [ROADMAP.md](./ROADMAP.md) - Future development plans
 - [TOOL_INVENTORY.md](./TOOL_INVENTORY.md) - Generated catalogue of every tool
 
 ## Changelog

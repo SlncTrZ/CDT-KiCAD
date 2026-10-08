@@ -149,7 +149,7 @@ does not already know about:
   `get_category_tools` and `search_tools`.
 - Nothing is hidden behind a dispatcher. An earlier design routed calls through
   an `execute_tool` meta-tool; that was rolled back because clients could not
-  see the real tool schemas. See `docs/ROUTER_ARCHITECTURE.md` for that history.
+  see the real tool schemas. See [the generated inventory](TOOL_INVENTORY.md) for the current callable surface.
 - A tool that is registered but missing from the registry still works, it is
   simply harder to discover. `tests-ts/registry-completeness.test.ts` freezes
   the number of such tools so it can only shrink.
