@@ -157,7 +157,7 @@ class BoardOutlineCommands:
                 circle.SetCenter(pcbnew.VECTOR2I(center_x_nm, center_y_nm))
                 circle.SetEnd(pcbnew.VECTOR2I(center_x_nm + radius_nm, center_y_nm))
                 circle.SetLayer(edge_layer)
-                circle.SetWidth(0)  # Zero width for edge cuts
+                circle.SetWidth(100_000)  # 0.1 mm: KiCad normalizes zero-width strokes on reopen
                 self.board.Add(circle)
 
             elif shape == "polygon":
@@ -617,7 +617,7 @@ class BoardOutlineCommands:
         line.SetStart(start)
         line.SetEnd(end)
         line.SetLayer(layer)
-        line.SetWidth(0)  # Zero width for edge cuts
+        line.SetWidth(100_000)  # 0.1 mm: KiCad normalizes zero-width strokes on reopen
         self.board.Add(line)
 
     def _add_rounded_rect(
@@ -723,5 +723,5 @@ class BoardOutlineCommands:
         arc.SetStart(pcbnew.VECTOR2I(start_x, start_y))
         arc.SetEnd(pcbnew.VECTOR2I(end_x, end_y))
         arc.SetLayer(layer)
-        arc.SetWidth(0)  # Zero width for edge cuts
+        arc.SetWidth(100_000)  # 0.1 mm: KiCad normalizes zero-width strokes on reopen
         self.board.Add(arc)

@@ -74,6 +74,7 @@ export interface BridgeRuntimeOptions {
 }
 
 type ProviderRuntimeErrorKind =
+  | "conflict"
   | "rate_limited"
   | "timeout"
   | "provider_unavailable"
@@ -932,7 +933,11 @@ export class KiCADMcpServer {
           try {
             begun = this.operationReceipts.begin(operationId, command, params);
           } catch (error) {
-            reject(error);
+            reject(new ProviderRuntimeError(
+              "conflict", false,
+              error instanceof Error ? error.message : "Operation identity conflicts with an existing receipt",
+              { operation_id: operationId, dispatched: false },
+            ));
             return;
           }
 
@@ -944,7 +949,7 @@ export class KiCADMcpServer {
             reject(new OperationUncertainError(begun.receipt));
             return;
           }
-          reject(new Error(`operation_id=${operationId} is already in flight`));
+          reject(new ProviderRuntimeError("conflict", false, `operation_id=${operationId} is already in flight`, { operation_id: operationId, dispatched: false }));
           return;
         }
 

@@ -6605,7 +6605,12 @@ print("ok")
     def _handle_ipc_add_track(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Add a track using IPC backend (real-time)"""
         if not self.use_ipc or not self.ipc_board_api:
-            return {"success": False, "message": "IPC backend not available"}
+            return {
+                "success": False,
+                "message": "IPC backend not available",
+                "kind": "provider_unavailable" if self.use_ipc else "unsupported_capability",
+                "retryable": bool(self.use_ipc),
+            }
 
         try:
             success = self.ipc_board_api.add_track(
@@ -6631,7 +6636,12 @@ print("ok")
     def _handle_ipc_add_via(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Add a via using IPC backend (real-time)"""
         if not self.use_ipc or not self.ipc_board_api:
-            return {"success": False, "message": "IPC backend not available"}
+            return {
+                "success": False,
+                "message": "IPC backend not available",
+                "kind": "provider_unavailable" if self.use_ipc else "unsupported_capability",
+                "retryable": bool(self.use_ipc),
+            }
 
         try:
             success = self.ipc_board_api.add_via(
@@ -6654,7 +6664,12 @@ print("ok")
     def _handle_ipc_add_text(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Add text using IPC backend (real-time)"""
         if not self.use_ipc or not self.ipc_board_api:
-            return {"success": False, "message": "IPC backend not available"}
+            return {
+                "success": False,
+                "message": "IPC backend not available",
+                "kind": "provider_unavailable" if self.use_ipc else "unsupported_capability",
+                "retryable": bool(self.use_ipc),
+            }
 
         try:
             success = self.ipc_board_api.add_text(
@@ -6679,7 +6694,12 @@ print("ok")
     def _handle_ipc_list_components(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """List components using IPC backend"""
         if not self.use_ipc or not self.ipc_board_api:
-            return {"success": False, "message": "IPC backend not available"}
+            return {
+                "success": False,
+                "message": "IPC backend not available",
+                "kind": "provider_unavailable" if self.use_ipc else "unsupported_capability",
+                "retryable": bool(self.use_ipc),
+            }
 
         try:
             components = self.ipc_board_api.list_components()
@@ -6691,7 +6711,12 @@ print("ok")
     def _handle_ipc_get_tracks(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Get tracks using IPC backend"""
         if not self.use_ipc or not self.ipc_board_api:
-            return {"success": False, "message": "IPC backend not available"}
+            return {
+                "success": False,
+                "message": "IPC backend not available",
+                "kind": "provider_unavailable" if self.use_ipc else "unsupported_capability",
+                "retryable": bool(self.use_ipc),
+            }
 
         try:
             tracks = self.ipc_board_api.get_tracks()
@@ -6703,7 +6728,12 @@ print("ok")
     def _handle_ipc_get_vias(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Get vias using IPC backend"""
         if not self.use_ipc or not self.ipc_board_api:
-            return {"success": False, "message": "IPC backend not available"}
+            return {
+                "success": False,
+                "message": "IPC backend not available",
+                "kind": "provider_unavailable" if self.use_ipc else "unsupported_capability",
+                "retryable": bool(self.use_ipc),
+            }
 
         try:
             vias = self.ipc_board_api.get_vias()
@@ -6720,7 +6750,12 @@ print("ok")
         can overwrite SWIG-side edits with the GUI's board state, so warn.
         """
         if not self.use_ipc or not self.ipc_board_api:
-            return {"success": False, "message": "IPC backend not available"}
+            return {
+                "success": False,
+                "message": "IPC backend not available",
+                "kind": "provider_unavailable" if self.use_ipc else "unsupported_capability",
+                "retryable": bool(self.use_ipc),
+            }
 
         result_note = None
         if getattr(self, "session_backend", None) == "swig":
