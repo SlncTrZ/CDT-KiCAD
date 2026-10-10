@@ -4,7 +4,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import express from "express";
 import { spawn, exec, ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
@@ -226,7 +225,7 @@ export class KiCADMcpServer {
   /** Resolved when Python prints {"type":"ready"} — stdin loop is live. */
   private readyPromise: Promise<void>;
   private resolveReady!: () => void;
-  private rejectReady!: (err: Error) => void;
+  private _rejectReady!: (err: Error) => void;
   /** Accumulates stdout until the READY marker is seen. */
   private startupBuffer: string = "";
   /** True after READY marker detected; persistent handler takes over. */
@@ -287,7 +286,7 @@ export class KiCADMcpServer {
     // Create the ready promise (resolved when Python sends {"type":"ready"})
     this.readyPromise = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
-      this.rejectReady = reject;
+      this._rejectReady = reject;
     });
 
     // Initialize STDIO transport
@@ -453,6 +452,10 @@ export class KiCADMcpServer {
 
     // Try to test pcbnew import (quick validation)
     if (pythonExecutableAvailable && existsSync(this.kicadScriptPath)) {
+      if (process.env.KICAD_SKIP_PCBNEW_VALIDATION === "1") {
+        logger.info("Skipping pcbnew module validation (KICAD_SKIP_PCBNEW_VALIDATION=1)");
+        return true;
+      }
       logger.info("Validating pcbnew module access...");
 
       const testCommand = `"${pythonExe}" -c "import pcbnew; print('OK')"`;
