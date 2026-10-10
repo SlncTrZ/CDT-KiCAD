@@ -1,6 +1,6 @@
 {
   "name": "cdt-kicad",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "CDT-KiCAD generic ECAD execution engine for SlncTrZ (fork of mixelpixx KiCAD-MCP-Server)",
   "type": "module",
   "main": "dist/index.js",

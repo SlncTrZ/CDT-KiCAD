@@ -9,6 +9,8 @@ import { KiCADMcpServer } from "./server.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { listenHttp } from "./http-transport.js";
+import { RemoteRuntimeTransport } from "./runtime/runtime-transport.js";
+import { RemoteKiCADRuntimeAdapter } from "./runtime/remote-kicad-runtime-adapter.js";
 
 // Get the current directory
 const __filename = fileURLToPath(import.meta.url);
@@ -29,8 +31,15 @@ async function main() {
     // Path to the Python script that interfaces with KiCAD
     const kicadScriptPath = join(dirname(__dirname), "python", "kicad_interface.py");
 
-    // Create the server
-    const server = new KiCADMcpServer(kicadScriptPath, config.logLevel);
+    // Only the workstation owns Python/KiCad. The control-host provider stays
+    // reachable when that separately managed runtime is offline.
+    const runtimeEndpoint = process.env.KICAD_RUNTIME_ENDPOINT?.trim();
+    const runtime = runtimeEndpoint
+      ? new RemoteKiCADRuntimeAdapter(
+          new RemoteRuntimeTransport(runtimeEndpoint, process.env.KICAD_RUNTIME_TOKEN ?? ""),
+        )
+      : null;
+    const server = new KiCADMcpServer(kicadScriptPath, config.logLevel, {}, runtime);
 
     // Transport selection: STDIO stays the default (local/desktop clients).
     // MCP_TRANSPORT=http|both enables opt-in Streamable HTTP network mode.
@@ -41,7 +50,7 @@ async function main() {
       "stdio"
     ).toLowerCase();
     const port =
-      options.port ?? (process.env.MCP_PORT ? Number(process.env.MCP_PORT) : config.port ?? 3100);
+      options.port ?? (process.env.MCP_PORT ? Number(process.env.MCP_PORT) : (config.port ?? 3100));
     const host = options.host ?? process.env.MCP_HOST ?? config.host ?? "127.0.0.1";
 
     if (transport === "http") {
@@ -60,7 +69,7 @@ async function main() {
     }
 
     // Setup graceful shutdown
-    setupGracefulShutdown(server);
+    setupGracefulShutdown(server, transport !== "http");
 
     logger.info(`KiCAD MCP server started with ${transport.toUpperCase()} transport`);
   } catch (error) {
@@ -100,9 +109,9 @@ function parseCommandLineArgs(args: string[]) {
 /**
  * Setup graceful shutdown handlers
  */
-function setupGracefulShutdown(server: KiCADMcpServer) {
-  // Handle stdin close (EOF) when parent process exits
-  process.stdin.on("close", async () => {
+function setupGracefulShutdown(server: KiCADMcpServer, usesStdio: boolean) {
+  // HTTP service lifetime belongs to systemd, not a closed stdin stream.
+  if (usesStdio) process.stdin.on("close", async () => {
     logger.info("process.stdin closed. Shutting down...");
     await shutdownServer(server);
   });

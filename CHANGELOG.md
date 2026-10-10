@@ -1,5 +1,11 @@
 # CDT-KiCAD release notes
 
+## 0.1.3 — independent split-host provider
+
+- HTTP MCP service on control host delegates native commands to authenticated loopback workstation agent via SSH forward; no local Linux KiCad process.
+- Remote dispatch pins runtime generation and preserves typed failure, operation receipts and uncertainty fences.
+- Long-running command deadlines follow the command policy; standalone HTTP service no longer exits on stdin EOF.
+
 ## 0.1.2 — fail-fast bridge startup
 
 - Fail promptly with a typed `provider_unavailable` error if the Python child exits before READY; remove readiness listeners and timer on settlement.

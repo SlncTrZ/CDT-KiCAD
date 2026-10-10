@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { RemoteKiCADRuntimeAdapter } from "../src/runtime/remote-kicad-runtime-adapter.js";
+import { RuntimeUncertainError, type RuntimeTransport } from "../src/runtime/runtime-transport.js";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +26,68 @@ type TestServer = {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("K5 independent provider with remote workstation", () => {
+  it("serves without local Python and forwards reads to the runtime", async () => {
+    const calls: string[] = [];
+    const transport = {
+      kind: "remote" as const,
+      async call(command: string) {
+        calls.push(command);
+        return { success: true, backend: "swig" };
+      },
+      async health() {
+        return { agent_generation: "gen-1" };
+      },
+      async close() {},
+    } satisfies RuntimeTransport;
+    const server = new KiCADMcpServer(
+      pythonBridge,
+      "error",
+      {},
+      new RemoteKiCADRuntimeAdapter(transport),
+    ) as unknown as TestServer & {
+      startBridge(): Promise<void>;
+      callKicadScript(command: string, params: object): Promise<unknown>;
+    };
+    await server.startBridge();
+    await expect(server.callKicadScript("get_backend_state", {})).resolves.toMatchObject({
+      backend: "swig",
+    });
+    expect(calls).toEqual(["get_backend_state"]);
+    expect(server.pythonProcess).toBeNull();
+  });
+
+  it("quarantines completion-unknown mutations instead of retrying", async () => {
+    const calls: string[] = [];
+    const transport = {
+      kind: "remote" as const,
+      async call(command: string) {
+        calls.push(command);
+        throw new RuntimeUncertainError("disconnected after dispatch");
+      },
+      async health() {
+        return { agent_generation: "gen-1" };
+      },
+      async close() {},
+    } satisfies RuntimeTransport;
+    const server = new KiCADMcpServer(
+      pythonBridge,
+      "error",
+      {},
+      new RemoteKiCADRuntimeAdapter(transport),
+    ) as unknown as {
+      callKicadScript(command: string, params: object): Promise<unknown>;
+    };
+    await expect(
+      server.callKicadScript("move_component", { operationId: "k5-op", x: 1 }),
+    ).rejects.toMatchObject({ code: "operation_uncertain" });
+    await expect(
+      server.callKicadScript("move_component", { operationId: "k5-op", x: 1 }),
+    ).rejects.toMatchObject({ code: "operation_uncertain" });
+    expect(calls).toEqual(["move_component"]);
+  });
 });
 
 describe("startup ready gate (#377)", () => {

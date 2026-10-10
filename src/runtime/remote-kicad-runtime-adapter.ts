@@ -24,11 +24,9 @@ import type {
   KiCADRuntimePort,
   RuntimeHealth,
   RuntimeTransportKind,
+  RuntimeExecutionOptions,
 } from "./kicad-runtime-port.js";
-import {
-  RuntimeGenerationMismatchError,
-  type RuntimeTransport,
-} from "./runtime-transport.js";
+import { RuntimeGenerationMismatchError, type RuntimeTransport } from "./runtime-transport.js";
 
 export class RemoteKiCADRuntimeAdapter implements KiCADRuntimePort {
   readonly transportKind: RuntimeTransportKind = "remote";
@@ -47,7 +45,9 @@ export class RemoteKiCADRuntimeAdapter implements KiCADRuntimePort {
       throw new TypeError("RemoteKiCADRuntimeAdapter requires a RuntimeTransport");
     }
     if (transport.kind !== "remote") {
-      throw new TypeError("RemoteKiCADRuntimeAdapter requires a remote RuntimeTransport (use LocalRuntimeTransport for in-process ports)");
+      throw new TypeError(
+        "RemoteKiCADRuntimeAdapter requires a remote RuntimeTransport (use LocalRuntimeTransport for in-process ports)",
+      );
     }
     const pinned = String(options.expectedGeneration ?? "").trim();
     this.expectedGeneration = pinned || null;
@@ -66,13 +66,24 @@ export class RemoteKiCADRuntimeAdapter implements KiCADRuntimePort {
     this.expectedGeneration = value;
   }
 
-  async execute(command: string, params: Record<string, unknown> = {}): Promise<unknown> {
+  async execute(
+    command: string,
+    params: Record<string, unknown> = {},
+    options: RuntimeExecutionOptions = {},
+  ): Promise<unknown> {
     const op = String(command ?? "").trim();
     if (!op) throw new Error("KiCAD remote runtime execute refused: empty command");
+    // Health is a read-only authenticated generation probe. Do not dispatch
+    // native operations until a fresh worker generation has been pinned.
+    await this.health();
     try {
       return await this.transport.call(op, params ?? {}, {
-        ...(this.defaultDeadlineMs === undefined ? {} : { deadlineMs: this.defaultDeadlineMs }),
-        ...(this.expectedGeneration === null ? {} : { expectedGeneration: this.expectedGeneration }),
+        ...((options.timeoutMs ?? this.defaultDeadlineMs) === undefined
+          ? {}
+          : { deadlineMs: options.timeoutMs ?? this.defaultDeadlineMs }),
+        ...(this.expectedGeneration === null
+          ? {}
+          : { expectedGeneration: this.expectedGeneration }),
       });
     } catch (error) {
       if (error instanceof RuntimeGenerationMismatchError) {
@@ -99,6 +110,10 @@ export class RemoteKiCADRuntimeAdapter implements KiCADRuntimePort {
           `got ${JSON.stringify(generation)}; result discarded`,
       );
     }
+    if (!generation || generation === "unpinned-remote") {
+      throw new RuntimeGenerationMismatchError("runtime health omitted a valid generation");
+    }
+    if (this.expectedGeneration === null) this.expectedGeneration = generation;
     return {
       transport: "remote",
       reachable: true,

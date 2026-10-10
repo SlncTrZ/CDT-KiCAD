@@ -28,9 +28,10 @@
 import { Buffer } from "node:buffer";
 import { randomUUID, timingSafeEqual } from "crypto";
 import type { KiCADRuntimePort } from "./kicad-runtime-port.js";
+import { AUTOROUTE_MAX_BUDGET_MS } from "../command-timeout.js";
 
 export const DEFAULT_TRANSPORT_DEADLINE_MS = 60_000;
-export const MAX_TRANSPORT_DEADLINE_MS = 120_000;
+export const MAX_TRANSPORT_DEADLINE_MS = AUTOROUTE_MAX_BUDGET_MS + 30_000;
 export const MIN_TRANSPORT_DEADLINE_MS = 100;
 export const MAX_TRANSPORT_REQUEST_BYTES = 256 * 1024;
 export const MAX_TRANSPORT_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -129,7 +130,11 @@ export function checkTransportOp(command: string): string {
 
 export function checkTransportDeadline(deadlineMs: number | undefined): number {
   const value = deadlineMs === undefined ? DEFAULT_TRANSPORT_DEADLINE_MS : Math.floor(deadlineMs);
-  if (!Number.isFinite(value) || value < MIN_TRANSPORT_DEADLINE_MS || value > MAX_TRANSPORT_DEADLINE_MS) {
+  if (
+    !Number.isFinite(value) ||
+    value < MIN_TRANSPORT_DEADLINE_MS ||
+    value > MAX_TRANSPORT_DEADLINE_MS
+  ) {
     throw new RuntimeOpRefusedError(
       `deadline_ms must be within [${MIN_TRANSPORT_DEADLINE_MS}, ${MAX_TRANSPORT_DEADLINE_MS}], got ${deadlineMs}`,
     );
@@ -155,7 +160,11 @@ export interface TransportCallOptions {
 
 export interface RuntimeTransport {
   readonly kind: "local" | "remote";
-  call(command: string, params?: Record<string, unknown>, options?: TransportCallOptions): Promise<unknown>;
+  call(
+    command: string,
+    params?: Record<string, unknown>,
+    options?: TransportCallOptions,
+  ): Promise<unknown>;
   health(): Promise<Record<string, unknown>>;
   close(): Promise<void>;
 }
@@ -207,7 +216,12 @@ export class LocalRuntimeTransport implements RuntimeTransport {
   async health(): Promise<Record<string, unknown>> {
     if (this.closed) throw new RuntimeUnavailableError("local runtime transport is closed");
     const portHealth = await this.port.health();
-    return { ...portHealth, transport: "local" as const, reachable: !this.closed, via: "local-transport" };
+    return {
+      ...portHealth,
+      transport: "local" as const,
+      reachable: !this.closed,
+      via: "local-transport",
+    };
   }
 
   async close(): Promise<void> {
@@ -227,7 +241,10 @@ export function bearerMatches(presented: string, expected: string): boolean {
   }
 }
 
-function requireLoopback(baseUrl: string, allowRemote: boolean): { base: string; host: string; port: number } {
+function requireLoopback(
+  baseUrl: string,
+  allowRemote: boolean,
+): { base: string; host: string; port: number } {
   let parsed: URL;
   try {
     parsed = new URL(baseUrl);
@@ -311,18 +328,25 @@ async function httpJson(
   }
 }
 
+type RuntimeWireResult = Record<string, unknown> | unknown[] | string | number | boolean | null;
+
 function decodeEnvelope(
   op: string,
   status: number,
   raw: string,
   expectedGeneration?: string,
-): unknown {
+): RuntimeWireResult {
   if (status === 401 || status === 403) {
-    throw new RuntimeAuthError(`runtime endpoint rejected credentials for op ${JSON.stringify(op)} (http ${status})`);
+    throw new RuntimeAuthError(
+      `runtime endpoint rejected credentials for op ${JSON.stringify(op)} (http ${status})`,
+    );
   }
-  if (status === 404) throw new RuntimeUnavailableError(`runtime endpoint has no route for op ${JSON.stringify(op)}`);
+  if (status === 404)
+    throw new RuntimeUnavailableError(`runtime endpoint has no route for op ${JSON.stringify(op)}`);
   if (status === 409) {
-    throw new RuntimeGenerationMismatchError(`runtime generation mismatch for op ${JSON.stringify(op)}; result discarded`);
+    throw new RuntimeGenerationMismatchError(
+      `runtime generation mismatch for op ${JSON.stringify(op)}; result discarded`,
+    );
   }
   if (status >= 500) {
     throw new RuntimeUncertainError(
@@ -331,20 +355,35 @@ function decodeEnvelope(
     );
   }
   if (status < 200 || status >= 300) {
-    throw new RuntimeTransportFailure("internal_error", false, `runtime endpoint http ${status} for op ${JSON.stringify(op)}`);
+    throw new RuntimeTransportFailure(
+      "internal_error",
+      false,
+      `runtime endpoint http ${status} for op ${JSON.stringify(op)}`,
+    );
   }
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(raw || "{}") as Record<string, unknown>;
   } catch {
-    throw new RuntimeUncertainError(`malformed runtime response for op ${JSON.stringify(op)}; completion is unknown`);
+    throw new RuntimeUncertainError(
+      `malformed runtime response for op ${JSON.stringify(op)}; completion is unknown`,
+    );
   }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload["ok"] !== "boolean") {
-    throw new RuntimeUncertainError(`malformed runtime envelope for op ${JSON.stringify(op)}; completion is unknown`);
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    typeof payload["ok"] !== "boolean"
+  ) {
+    throw new RuntimeUncertainError(
+      `malformed runtime envelope for op ${JSON.stringify(op)}; completion is unknown`,
+    );
   }
   if (payload["ok"] !== true) {
     const code = String(payload["error_code"] || "error");
-    const message = String(payload["error_message"] || `runtime op ${JSON.stringify(op)} failed: ${code}`);
+    const message = String(
+      payload["error_message"] || `runtime op ${JSON.stringify(op)} failed: ${code}`,
+    );
     // Typed worker failure passthrough (agent forwards the canonical worker
     // payload verbatim, e.g. SWIG unsupported_capability): preserve kind +
     // retryability end-to-end instead of collapsing to internal_error.
@@ -352,13 +391,20 @@ function decodeEnvelope(
       throw new RuntimeTransportFailure(
         payload["kind"] as string,
         payload["retryable"] === true,
-        typeof payload["message"] === "string" && payload["message"] ? (payload["message"] as string) : message,
-        (payload["details"] && typeof payload["details"] === "object"
+        typeof payload["message"] === "string" && payload["message"]
+          ? (payload["message"] as string)
+          : message,
+        payload["details"] && typeof payload["details"] === "object"
           ? (payload["details"] as Record<string, unknown>)
-          : undefined),
+          : undefined,
       );
     }
-    if (code === "op_refused" || code === "bad_request" || code === "oversized" || code === "unknown_op") {
+    if (
+      code === "op_refused" ||
+      code === "bad_request" ||
+      code === "oversized" ||
+      code === "unknown_op"
+    ) {
       throw new RuntimeOpRefusedError(message);
     }
     if (code === "uncertain" || payload["completion_unknown"] === true) {
@@ -379,7 +425,7 @@ function decodeEnvelope(
       true,
     );
   }
-  return payload["result"];
+  return payload["result"] as RuntimeWireResult;
 }
 
 /**
@@ -398,8 +444,13 @@ export class RemoteRuntimeTransport implements RuntimeTransport {
 
   private closed = false;
 
-  constructor(baseUrl: string, authToken: string, options: { allowRemote?: boolean; defaultDeadlineMs?: number } = {}) {
-    if (!String(authToken ?? "").trim()) throw new Error("RemoteRuntimeTransport requires a non-empty auth_token");
+  constructor(
+    baseUrl: string,
+    authToken: string,
+    options: { allowRemote?: boolean; defaultDeadlineMs?: number } = {},
+  ) {
+    if (!String(authToken ?? "").trim())
+      throw new Error("RemoteRuntimeTransport requires a non-empty auth_token");
     this.base = requireLoopback(baseUrl, options.allowRemote === true).base;
     this.token = String(authToken);
     this.defaultDeadlineMs = checkTransportDeadline(options.defaultDeadlineMs);
@@ -417,7 +468,10 @@ export class RemoteRuntimeTransport implements RuntimeTransport {
   ): Promise<unknown> {
     if (this.closed) throw new RuntimeUnavailableError("remote runtime transport is closed");
     const op = checkTransportOp(command);
-    const deadlineMs = options.deadlineMs === undefined ? this.defaultDeadlineMs : checkTransportDeadline(options.deadlineMs);
+    const deadlineMs =
+      options.deadlineMs === undefined
+        ? this.defaultDeadlineMs
+        : checkTransportDeadline(options.deadlineMs);
     const wire = {
       request_id: options.requestId ?? newRequestId(),
       op,
@@ -443,7 +497,10 @@ export class RemoteRuntimeTransport implements RuntimeTransport {
       timeoutMs: 5_000,
     });
     const result = decodeEnvelope("health", status, raw);
-    return (result && typeof result === "object" ? result : { ok: true, detail: result }) as Record<string, unknown>;
+    return (result && typeof result === "object" ? result : { ok: true, detail: result }) as Record<
+      string,
+      unknown
+    >;
   }
 
   async close(): Promise<void> {

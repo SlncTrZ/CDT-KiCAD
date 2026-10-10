@@ -10,6 +10,9 @@ import { existsSync } from "fs";
 import { join, dirname } from "path";
 import { logger } from "./logger.js";
 import { LocalKiCADRuntimeAdapter } from "./runtime/local-kicad-runtime-adapter.js";
+import type { KiCADRuntimePort } from "./runtime/kicad-runtime-port.js";
+import { RemoteKiCADRuntimeAdapter } from "./runtime/remote-kicad-runtime-adapter.js";
+import { MAX_TRANSPORT_DEADLINE_MS, RuntimeTransportFailure } from "./runtime/runtime-transport.js";
 import { deriveKiCadSitePackages, findPythonExecutable } from "./runtime/python-discovery.js";
 import { computeCommandTimeout, DEFAULT_COMMAND_TIMEOUT_MS } from "./command-timeout.js";
 import { PROVIDER_ID, PROVIDER_VERSION } from "./provider-contract.js";
@@ -225,7 +228,6 @@ export class KiCADMcpServer {
   /** Resolved when Python prints {"type":"ready"} — stdin loop is live. */
   private readyPromise: Promise<void>;
   private resolveReady!: () => void;
-  private _rejectReady!: (err: Error) => void;
   /** Accumulates stdout until the READY marker is seen. */
   private startupBuffer: string = "";
   /** True after READY marker detected; persistent handler takes over. */
@@ -239,9 +241,12 @@ export class KiCADMcpServer {
    * callKicadScript queue (receipts, correlation, timeouts) with identical
    * behavior. Remote transports compose against this port, never against
    * server internals. NOTE: per-call `timeoutMs` passed via the port is not
-   * yet plumbed into the queue — the command-timeout policy still applies.
+   * yet plumbed into the queue â€” the command-timeout policy still applies.
    */
-  private readonly runtimePort: LocalKiCADRuntimeAdapter;
+  private readonly runtimePort: KiCADRuntimePort;
+  private readonly remoteRuntime: RemoteKiCADRuntimeAdapter | null;
+  private remoteBusy = false;
+  private readonly remoteQueue: Array<() => void> = [];
 
   /**
    * Constructor for the KiCAD MCP Server
@@ -252,6 +257,7 @@ export class KiCADMcpServer {
     kicadScriptPath: string,
     logLevel: "error" | "warn" | "info" | "debug" = "info",
     runtimeOptions: BridgeRuntimeOptions = {},
+    remoteRuntime: RemoteKiCADRuntimeAdapter | null = null,
   ) {
     // Set up the logger
     logger.setLogLevel(logLevel);
@@ -284,9 +290,8 @@ export class KiCADMcpServer {
       description: "CDT-KiCAD generic ECAD execution engine (SlncTrZ provider: kicad)",
     });
     // Create the ready promise (resolved when Python sends {"type":"ready"})
-    this.readyPromise = new Promise((resolve, reject) => {
+    this.readyPromise = new Promise((resolve) => {
       this.resolveReady = resolve;
-      this._rejectReady = reject;
     });
 
     // Initialize STDIO transport
@@ -297,13 +302,14 @@ export class KiCADMcpServer {
     this.registerAll();
 
     // K1 seam: local adapter delegates to this instance's dispatch queue.
-    this.runtimePort = new LocalKiCADRuntimeAdapter((command, params) =>
-      this.callKicadScript(command, params),
-    );
+    this.remoteRuntime = remoteRuntime;
+    this.runtimePort =
+      remoteRuntime ??
+      new LocalKiCADRuntimeAdapter((command, params) => this.callKicadScript(command, params));
   }
 
   /** Provider-facing runtime seam (local child-process dispatch by default). */
-  public getRuntimePort(): LocalKiCADRuntimeAdapter {
+  public getRuntimePort(): KiCADRuntimePort {
     return this.runtimePort;
   }
 
@@ -572,6 +578,12 @@ export class KiCADMcpServer {
    * Idempotent: STDIO + HTTP modes share one bridge.
    */
   public async startBridge(): Promise<void> {
+    if (this.remoteRuntime) {
+      // The control host never discovers or spawns KiCad. A down workstation
+      // does not remove this provider's help/status/catalog from MCP.
+      this.bridgeStarted = true;
+      return;
+    }
     if (this.bridgeStarted) {
       logger.info("Python bridge already running — reusing it");
       return;
@@ -707,6 +719,7 @@ export class KiCADMcpServer {
    */
   async stop(): Promise<void> {
     logger.info("Stopping KiCAD MCP server...");
+    if (this.remoteRuntime) await this.remoteRuntime.close();
 
     // Kill the Python process if it's running
     if (this.pythonProcess) {
@@ -927,7 +940,105 @@ export class KiCADMcpServer {
    * @param params The parameters for the command
    * @returns The result of the command execution
    */
+  private async callRemoteKicadScript(command: string, rawParams: any): Promise<any> {
+    const runtime = this.remoteRuntime!;
+    const { operationId: suppliedId, params } = splitOperationId(rawParams);
+    const mutating = commandMayMutate(command);
+    const operationId = mutating ? (suppliedId ?? randomUUID()) : undefined;
+    // The historical queue is process-local; serialize remote admission too so
+    // concurrent writes cannot both pass the same uncertain-receipt gate.
+    if (this.remoteBusy) {
+      if (this.remoteQueue.length >= this.maxQueueDepth) {
+        throw new ProviderRuntimeError("rate_limited", true, "Remote runtime queue is full");
+      }
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          const index = this.remoteQueue.indexOf(next);
+          if (index >= 0) this.remoteQueue.splice(index, 1);
+          reject(new ProviderRuntimeError("timeout", true, "Remote runtime queue wait expired"));
+        }, this.enqueueDeadlineMs);
+        const next = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        this.remoteQueue.push(next);
+      });
+    } else {
+      this.remoteBusy = true;
+    }
+    try {
+      return await this.dispatchRemoteKicadScript(runtime, command, params, operationId);
+    } finally {
+      const next = this.remoteQueue.shift();
+      if (next) next();
+      else this.remoteBusy = false;
+    }
+  }
+
+  private async dispatchRemoteKicadScript(
+    runtime: RemoteKiCADRuntimeAdapter,
+    command: string,
+    params: Record<string, unknown>,
+    operationId?: string,
+  ): Promise<any> {
+    if (operationId) {
+      const existing = this.operationReceipts.get(operationId);
+      if (existing) {
+        let begun;
+        try {
+          begun = this.operationReceipts.begin(operationId, command, params);
+        } catch {
+          throw new ProviderRuntimeError(
+            "conflict",
+            false,
+            "Operation identity conflicts with an existing receipt",
+          );
+        }
+        if (begun.kind === "committed" || begun.kind === "failed") {
+          return decorateWithReceipt(begun.receipt.result, begun.receipt);
+        }
+        if (begun.kind === "uncertain") throw new OperationUncertainError(begun.receipt);
+        throw new ProviderRuntimeError("conflict", false, "Operation already in flight");
+      }
+      const blocker = this.operationReceipts.firstUncertain();
+      if (blocker) throw new OperationBlockedError(blocker);
+    }
+    // Transport refuses deadlines beyond its bound. Refuse before dispatch,
+    // rather than silently truncating a long native operation's deadline.
+    const deadline = computeCommandTimeout(command, params);
+    if (deadline > MAX_TRANSPORT_DEADLINE_MS) {
+      throw new ProviderRuntimeError(
+        "provider_unavailable",
+        false,
+        "Remote runtime deadline is insufficient for this operation",
+      );
+    }
+    if (operationId) this.operationReceipts.begin(operationId, command, params);
+    try {
+      const result = await runtime.execute(command, params, { timeoutMs: deadline });
+      if (!operationId) return result;
+      const receipt =
+        (result as { success?: boolean } | null)?.success === false
+          ? this.operationReceipts.markFailed(operationId, result)
+          : this.operationReceipts.markCommitted(operationId, result);
+      return decorateWithReceipt(result, receipt);
+    } catch (error) {
+      if (operationId) {
+        // A typed worker refusal proves failure. An I/O or generation failure
+        // may follow dispatch and must remain quarantined, never replayed.
+        if (error instanceof RuntimeTransportFailure && error.kind === "unsupported_capability") {
+          this.operationReceipts.markFailed(operationId, { success: false, kind: error.kind });
+        } else {
+          const receipt = this.operationReceipts.markUncertain(operationId);
+          throw new OperationUncertainError(receipt);
+        }
+      }
+      throw error;
+    }
+  }
+
   private async callKicadScript(command: string, rawParams: any): Promise<any> {
+    if (this.remoteRuntime) return this.callRemoteKicadScript(command, rawParams);
     return new Promise((resolve, reject) => {
       const requestId = this.allocateInternalRequestId();
       const enqueuedAtMs = this.now();

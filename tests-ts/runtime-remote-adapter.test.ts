@@ -28,13 +28,22 @@ function readRuntimeModule(name: string): string {
 }
 
 describe("K2 remote provider never discovers local KiCad", () => {
-  const forbidden = ["Program Files", "LOCALAPPDATA", "pcbnew", "python-discovery", "spawn", "PYTHONPATH"];
+  const forbidden = [
+    "Program Files",
+    "LOCALAPPDATA",
+    "pcbnew",
+    "python-discovery",
+    "spawn",
+    "PYTHONPATH",
+  ];
 
   it("remote adapter + remote transport sources stay free of local discovery", () => {
     for (const module of ["remote-kicad-runtime-adapter.ts", "runtime-transport.ts"]) {
       const source = readRuntimeModule(module);
       for (const marker of forbidden) {
-        expect(source, `${module} must not reference ${JSON.stringify(marker)}`).not.toContain(marker);
+        expect(source, `${module} must not reference ${JSON.stringify(marker)}`).not.toContain(
+          marker,
+        );
       }
     }
   });
@@ -47,12 +56,10 @@ describe("K2 remote provider never discovers local KiCad", () => {
   });
 
   it("remote adapter requires a remote transport (local transport refused)", () => {
-    const local = new LocalRuntimeTransport(
-      new LocalKiCADRuntimeAdapter(async () => ({})),
+    const local = new LocalRuntimeTransport(new LocalKiCADRuntimeAdapter(async () => ({})));
+    expect(() => new RemoteKiCADRuntimeAdapter(local as unknown as RuntimeTransport)).toThrow(
+      /remote RuntimeTransport/,
     );
-    expect(
-      () => new RemoteKiCADRuntimeAdapter(local as unknown as RuntimeTransport),
-    ).toThrow(/remote RuntimeTransport/);
   });
 });
 
@@ -92,6 +99,40 @@ describe("K2 remote adapter typed forwarding", () => {
     adapter.pinGeneration("agent-gen-9");
     await adapter.close();
     expect(calls.at(-1)).toMatchObject({ op: "__close__" });
+  });
+
+  it("propagates the command-specific deadline instead of silently using the short transport default", async () => {
+    const calls: Array<{ op: string; params: unknown; options: unknown }> = [];
+    const adapter = new RemoteKiCADRuntimeAdapter(recordingTransport(calls));
+    await adapter.execute("run_drc", {}, { timeoutMs: 600_000 });
+    expect(calls[0]).toMatchObject({
+      options: { deadlineMs: 600_000, expectedGeneration: "agent-gen-9" },
+    });
+  });
+
+  it("pins the first healthy generation and refuses a restarted workstation without dispatch", async () => {
+    let generation = "gen-a";
+    let dispatches = 0;
+    const transport = {
+      kind: "remote" as const,
+      async call() {
+        dispatches++;
+        return { success: true };
+      },
+      async health() {
+        return { agent_generation: generation };
+      },
+      async close() {},
+    } satisfies RuntimeTransport;
+    const adapter = new RemoteKiCADRuntimeAdapter(transport);
+    await adapter.execute("get_backend_state");
+    expect(dispatches).toBe(1);
+    generation = "gen-b";
+    await expect(adapter.health()).rejects.toBeInstanceOf(RuntimeGenerationMismatchError);
+    await expect(adapter.execute("get_backend_state")).rejects.toBeInstanceOf(
+      RuntimeGenerationMismatchError,
+    );
+    expect(dispatches).toBe(1);
   });
 
   it("refuses stale agent health before trusting results", async () => {
