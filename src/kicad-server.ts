@@ -6,6 +6,7 @@ import { spawn, ChildProcess } from "child_process";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
+import { PROVIDER_VERSION } from "./provider-contract.js";
 
 // Import all tool definitions for reference
 // import { registerBoardTools } from './tools/board.js';
@@ -38,7 +39,7 @@ class KiCADServer {
     this.server = new Server(
       {
         name: "kicad-mcp-server",
-        version: "2.4.0",
+        version: PROVIDER_VERSION,
       },
       {
         capabilities: {
