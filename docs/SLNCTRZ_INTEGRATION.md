@@ -1,5 +1,7 @@
 # SlncTrZ-MCP Integration — CDT-KiCAD (`kicad`)
 
+**Stable package:** `0.1.1` / `v.0.1.1`; API contract remains `cdt-kicad-contract-v2`. See [release & deployment](RELEASE_AND_DEPLOYMENT.md) for credential-safe upgrade/rollback. A source tag does not prove a running gateway update.
+
 > Companion to `MCP_PROVIDER_STANDARD.md` (Draft v0.2) and the runtime
 > `docs/TOOL_GUIDE.md`. The `help` tool is authoritative at runtime; this
 > file is the static gateway-wiring reference.

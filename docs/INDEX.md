@@ -2,7 +2,7 @@
 
 | Task | Reference |
 | --- | --- |
-| Install and start | [README](../README.md), [client configuration](CLIENT_CONFIGURATION.md) |
+| Install and start | [README](../README.md), [client configuration](CLIENT_CONFIGURATION.md), [release & deployment](RELEASE_AND_DEPLOYMENT.md) |
 | Platform-specific setup | [Platform guide](PLATFORM_GUIDE.md), [Windows troubleshooting](WINDOWS_TROUBLESHOOTING.md) |
 | Callable contract and discovery | [Runtime guide](TOOL_GUIDE.md), [generated inventory](TOOL_INVENTORY.md) |
 | Schematic operations | [Schematic reference](SCHEMATIC_TOOLS_REFERENCE.md), [headless authoring](HEADLESS_AUTHORING.md) |

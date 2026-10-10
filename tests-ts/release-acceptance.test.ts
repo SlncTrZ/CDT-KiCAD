@@ -152,7 +152,7 @@ describe("release evidence manifest", () => {
     sourceSha: "a".repeat(40),
     kicadBuild: "KiCad 10.0.0",
     provider: {
-      version: "0.1.0",
+      version: "0.1.1",
       contractVersion: "cdt-kicad-contract-v2",
       contractHash: "b".repeat(64),
     },

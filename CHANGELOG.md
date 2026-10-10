@@ -1,5 +1,10 @@
 # CDT-KiCAD release notes
 
+## 0.1.1 — documentation and release maintenance
+
+- Stable source-only release/install/rollback guide and refreshed documentation index; no new KiCad native support claims.
+- Verified existing 239-tool registry identity and unchanged contract v2; upstream version preserved in attribution.
+
 ## 0.1.0 — stable CDT product numbering
 
 - Existing KiCAD capabilities retained; package version normalized to `0.1.0`.
