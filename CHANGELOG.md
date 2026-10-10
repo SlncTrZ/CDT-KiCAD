@@ -1,6 +1,12 @@
 # CDT-KiCAD release notes
 
-## 2.7.0-cdt.1
+## 0.1.0 — stable CDT product numbering
+
+- Existing KiCAD capabilities retained; package version normalized to `0.1.0`.
+- Canonical tag `v.0.1.0`, distinct from upstream `v2.7.0`.
+- No new native KiCAD qualification implied by metadata-only changes.
+
+## 2.7.0-cdt.1 — historical fork baseline
 
 CDT adapts upstream `v2.7.0` to the SlncTrZ provider contract:
 

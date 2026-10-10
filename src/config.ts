@@ -24,7 +24,7 @@ const LogLevelSchema = z.enum(LOG_LEVEL_VALUES);
  */
 const ConfigSchema = z.object({
   name: z.string().default("cdt-kicad"),
-  version: z.string().default("2.7.0-cdt.1"),
+  version: z.string().default("0.1.0"),
   description: z
     .string()
     .default("CDT-KiCAD generic ECAD execution engine (SlncTrZ provider: kicad)"),

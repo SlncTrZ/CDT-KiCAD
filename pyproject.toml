@@ -1,9 +1,9 @@
 [project]
 name = "kicad-mcp-server"
 # Release version — must track package.json and src/provider-contract.ts
-# PROVIDER_VERSION (currently 2.7.0-cdt.1, the CDT fork release; 2.4.0 was
+# PROVIDER_VERSION (currently 0.1.0, the CDT stable release; 2.4.0 was
 # stale upstream metadata). Kept in sync by tests-ts/version-sync.test.ts.
-version = "2.7.0-cdt.1"
+version = "0.1.0"
 requires-python = ">=3.9"
 
 [tool.black]
