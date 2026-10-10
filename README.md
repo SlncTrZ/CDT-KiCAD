@@ -4,7 +4,7 @@ Generic ECAD execution provider for schematic, board, routing, library, export
 and DRC/ERC operations. Engineering design rules and professional approval belong
 to CDT_Engineer.
 
-CDT release `0.1.1` (upstream baseline `v2.7.0`) · Provider `kicad` · Contract `cdt-kicad-contract-v2`.
+CDT release `0.1.2` (upstream baseline `v2.7.0`) · Provider `kicad` · Contract `cdt-kicad-contract-v2`.
 
 239 tools registered; 236 indexed for keyword discovery and 3 discovery controls intentionally direct-only.
 236 discoverable tools across 20 categories.

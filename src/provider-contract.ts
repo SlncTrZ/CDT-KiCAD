@@ -17,7 +17,7 @@ import { fileURLToPath } from "url";
 export const PROVIDER_ID = "kicad";
 
 /** Provider software version — must track package.json. */
-export const PROVIDER_VERSION = "0.1.1";
+export const PROVIDER_VERSION = "0.1.2";
 
 /** Version of this help/tool contract. Bump on any tool/capability change. */
 export const CONTRACT_VERSION = "cdt-kicad-contract-v2";

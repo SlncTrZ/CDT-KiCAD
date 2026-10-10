@@ -1,6 +1,6 @@
 # CDT-KiCAD — Release and deployment
 
-**CDT release:** `0.1.1` · tag `v.0.1.1` · contract `cdt-kicad-contract-v2`. The upstream software baseline `v2.7.0` is **not** the CDT release version.
+**CDT release:** `0.1.2` · tag `v.0.1.2` · contract `cdt-kicad-contract-v2`. The upstream software baseline `v2.7.0` is **not** the CDT release version.
 
 GitHub [source releases](https://github.com/SlncTrZ/CDT-KiCAD/releases) do not imply a Windows executable or native KiCad runtime has been installed. The declared accepted target is **KiCad 10.0.6 / Windows 11**, CLI/native. Other builds/GUI IPC need their own measured acceptance.
 
@@ -12,6 +12,6 @@ GitHub [source releases](https://github.com/SlncTrZ/CDT-KiCAD/releases) do not i
 
 ## Upgrade and rollback
 
-Install or unpack into a new immutable directory; keep the previous Node bundle, requirements, native CLI path and auth binding. Verify `npm ci`, TypeScript tests, the Windows-native target check, DRC/ERC readback and scoped project save/reopen before switching owner-managed Gateway registration. Never downgrade an unavailable IPC capability silently to SWIG. If auth/backend or project-state checks fail, restore the previous registration and runtime without deleting credentials or modifying production boards.
+Install or unpack into a new immutable directory; keep the previous Node bundle, requirements, native CLI path and auth binding. On a Linux control host without `kicad-cli` and `pcbnew`, install only as a staged package: leave the owner-managed Gateway registration and previous version untouched until an approved native runtime is available. `KICAD_SKIP_PCBNEW_VALIDATION=1` is a diagnostic-only bypass, not native acceptance. Verify `npm ci`, TypeScript tests, the Windows-native target check, DRC/ERC readback and scoped project save/reopen before switching owner-managed Gateway registration. Never downgrade an unavailable IPC capability silently to SWIG. If auth/backend or project-state checks fail, restore the previous registration and runtime without deleting credentials or modifying production boards.
 
 [Documentation index](INDEX.md) · [Tool guide](TOOL_GUIDE.md) · [Windows acceptance](WINDOWS_NATIVE_ACCEPTANCE.md) · [Troubleshooting](WINDOWS_TROUBLESHOOTING.md).

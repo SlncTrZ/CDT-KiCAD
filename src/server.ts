@@ -454,64 +454,64 @@ export class KiCADMcpServer {
     if (pythonExecutableAvailable && existsSync(this.kicadScriptPath)) {
       if (process.env.KICAD_SKIP_PCBNEW_VALIDATION === "1") {
         logger.info("Skipping pcbnew module validation (KICAD_SKIP_PCBNEW_VALIDATION=1)");
-        return true;
-      }
-      logger.info("Validating pcbnew module access...");
+      } else {
+        logger.info("Validating pcbnew module access...");
 
-      const testCommand = `"${pythonExe}" -c "import pcbnew; print('OK')"`;
+        const testCommand = `"${pythonExe}" -c "import pcbnew; print('OK')"`;
 
-      try {
-        const { stdout, stderr } = await new Promise<{
-          stdout: string;
-          stderr: string;
-        }>((resolve, reject) => {
-          exec(
-            testCommand,
-            {
-              timeout: 5000,
-              env: { ...process.env },
-            },
-            (error: any, stdout: string, stderr: string) => {
-              if (error) {
-                reject(error);
-              } else {
-                resolve({ stdout, stderr });
-              }
-            },
-          );
-        });
+        try {
+          const { stdout, stderr } = await new Promise<{
+            stdout: string;
+            stderr: string;
+          }>((resolve, reject) => {
+            exec(
+              testCommand,
+              {
+                timeout: 5000,
+                env: { ...process.env },
+              },
+              (error: any, stdout: string, stderr: string) => {
+                if (error) {
+                  reject(error);
+                } else {
+                  resolve({ stdout, stderr });
+                }
+              },
+            );
+          });
 
-        if (!stdout.includes("OK")) {
-          errors.push("pcbnew module import test failed");
-          errors.push(`Output: ${stdout}`);
-          errors.push(`Errors: ${stderr}`);
+          if (!stdout.includes("OK")) {
+            errors.push("pcbnew module import test failed");
+            errors.push(`Output: ${stdout}`);
+            errors.push(`Errors: ${stderr}`);
+
+            if (isWindows) {
+              errors.push("");
+              errors.push("Windows troubleshooting:");
+              errors.push(
+                "1. Set PYTHONPATH=C:\\Program Files\\KiCad\\9.0\\lib\\python3\\dist-packages",
+              );
+              errors.push(
+                '2. Test: "C:\\Program Files\\KiCad\\9.0\\bin\\python.exe" -c "import pcbnew"',
+              );
+              errors.push("3. Run: .\\setup-windows.ps1 for automatic fix");
+              errors.push("4. See: docs/WINDOWS_TROUBLESHOOTING.md");
+            }
+          } else {
+            logger.info("✓ pcbnew module validated successfully");
+          }
+        } catch (error: any) {
+          errors.push(`pcbnew validation failed: ${error.message}`);
 
           if (isWindows) {
             errors.push("");
-            errors.push("Windows troubleshooting:");
-            errors.push(
-              "1. Set PYTHONPATH=C:\\Program Files\\KiCad\\9.0\\lib\\python3\\dist-packages",
-            );
-            errors.push(
-              '2. Test: "C:\\Program Files\\KiCad\\9.0\\bin\\python.exe" -c "import pcbnew"',
-            );
-            errors.push("3. Run: .\\setup-windows.ps1 for automatic fix");
-            errors.push("4. See: docs/WINDOWS_TROUBLESHOOTING.md");
+            errors.push("This usually means:");
+            errors.push("- KiCAD is not installed");
+            errors.push("- PYTHONPATH is incorrect");
+            errors.push("- Python cannot find pcbnew module");
+            errors.push("");
+            errors.push("Quick fix: Run .\\setup-windows.ps1");
           }
-        } else {
-          logger.info("✓ pcbnew module validated successfully");
-        }
-      } catch (error: any) {
-        errors.push(`pcbnew validation failed: ${error.message}`);
-
-        if (isWindows) {
-          errors.push("");
-          errors.push("This usually means:");
-          errors.push("- KiCAD is not installed");
-          errors.push("- PYTHONPATH is incorrect");
-          errors.push("- Python cannot find pcbnew module");
-          errors.push("");
-          errors.push("Quick fix: Run .\\setup-windows.ps1");
         }
       }
     }
@@ -723,16 +723,45 @@ export class KiCADMcpServer {
    * commands.
    */
   private async waitForReady(timeoutMs: number): Promise<void> {
-    return new Promise((_resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Python process did not send READY within ${timeoutMs / 1000} s`));
-      }, timeoutMs);
-      this.readyPromise
-        .then(() => {
-          clearTimeout(timeout);
-          _resolve();
-        })
-        .catch(reject);
+    const child = this.pythonProcess;
+    if (!child) {
+      throw new ProviderRuntimeError("provider_unavailable", true, "Python bridge is not running");
+    }
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        child.removeListener("exit", onExit);
+        child.removeListener("error", onError);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
+        finish(
+          new ProviderRuntimeError(
+            "provider_unavailable",
+            true,
+            `Python bridge exited before READY (code ${code ?? "unknown"}, signal ${signal ?? "none"})`,
+          ),
+        );
+      const onError = (error: Error) => {
+        logger.error(`Python bridge failed before READY: ${error.message}`);
+        finish(
+          new ProviderRuntimeError("provider_unavailable", true, "Python bridge failed to start"),
+        );
+      };
+      const timeout = setTimeout(
+        () => finish(new Error(`Python process did not send READY within ${timeoutMs / 1000} s`)),
+        timeoutMs,
+      );
+      child.once("exit", onExit);
+      child.once("error", onError);
+      this.readyPromise.then(
+        () => finish(),
+        (error: Error) => finish(error),
+      );
     });
   }
 

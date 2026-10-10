@@ -1,5 +1,11 @@
 # CDT-KiCAD release notes
 
+## 0.1.2 — fail-fast bridge startup
+
+- Fail promptly with a typed `provider_unavailable` error if the Python child exits before READY; remove readiness listeners and timer on settlement.
+- Skipping pcbnew import validation no longer suppresses unrelated startup prerequisite failures.
+- No new native KiCad target qualification or tool contract changes.
+
 ## 0.1.1 — documentation and release maintenance
 
 - Stable source-only release/install/rollback guide and refreshed documentation index; no new KiCad native support claims.
