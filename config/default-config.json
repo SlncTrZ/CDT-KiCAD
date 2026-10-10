@@ -1,6 +1,6 @@
 {
   "name": "cdt-kicad",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CDT-KiCAD generic ECAD execution engine (SlncTrZ provider: kicad)",
   "pythonPath": "",
   "kicadPath": "",
